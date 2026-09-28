@@ -97,4 +97,14 @@ describe "Conventions de l'extension TELEDEC" do
     credentials.to_s.should_not contain("secret-tres-long")
     credentials.inspect.should_not contain("secret-tres-long")
   end
+
+  it "n'utilise que des icônes de la planche de l'interface (ADR-005 D5)" do
+    lucide = File.join(Teledec::SpecSupport::ROOT, "lib", "partiduo-ui-bulma", "icons", "lucide")
+    known = Dir.glob(File.join(lucide, "*.svg")).map { |path| File.basename(path, ".svg") }
+    known.should_not be_empty
+    used = source_files("ui/bulma/templates/**/*.html").flat_map do |path|
+      File.read(path).scan(/_icon\.html" with name="([a-z0-9-]+)"/).map { |match| "#{path.lchop(Teledec::SpecSupport::ROOT + "/")} #{match[1]}" }
+    end
+    used.reject { |item| known.includes?(item.split(' ').last) }.should be_empty
+  end
 end
