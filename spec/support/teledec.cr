@@ -16,6 +16,9 @@ module Teledec
       Transports.current.as(SimulatedTeledec)
     end
 
+    # Clé de suivi TELEDEC de la liasse 2026 du dossier des specs.
+    LIASSE_ID = "liasse:732829320:2026-12-31"
+
     def self.admin(permissions : Array(String) = ALL) : Partiduo::Api::Actor
       Partiduo::Api::Actor.user(@@admin_id, permissions, level: 3)
     end
@@ -39,7 +42,8 @@ module Teledec
     end
 
     def self.connect : Nil
-      Api.save_credentials(SYSTEM, Api::CredentialsInput.new(SimulatedTeledec::LOGIN, SimulatedTeledec::API_KEY)).value!
+      Api.save_credentials(SYSTEM, Api::CredentialsInput.new(SimulatedTeledec::LOGIN, SimulatedTeledec::API_KEY,
+        email: SimulatedTeledec::EMAIL, siret: SimulatedTeledec::SIRET)).value!
       nil
     end
 

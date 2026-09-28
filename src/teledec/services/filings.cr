@@ -55,6 +55,10 @@ module Teledec
         filing.fingerprint = built.payload.fingerprint
         filing.controls = built.controls.to_json
         filing.remote_id = ""
+        filing.remote_reference = ""
+        filing.remote_status = ""
+        filing.remote_url = ""
+        filing.declaration_id = ""
         filing.rejection_reason = ""
         filing.last_error = ""
         filing.manual = false
@@ -99,9 +103,48 @@ module Teledec
       if settings.login.to_s.empty? || key.empty?
         return Partiduo::Api::Result(Credentials).failure(FieldError.base("teledec.errors.credentials.missing"))
       end
-      Partiduo::Api::Result(Credentials).success(Credentials.new(settings.login.to_s, Secrets.decrypt(key), settings.env.to_s))
+      Partiduo::Api::Result(Credentials).success(Credentials.new(settings.login.to_s, Secrets.decrypt(key), settings.env.to_s,
+        account_email(settings.email.to_s), settings.siret.to_s))
     rescue Secrets::Error
       Partiduo::Api::Result(Credentials).failure(FieldError.base("teledec.errors.credentials.unreadable"))
+    end
+
+    # Email du compte TELEDEC : celui des paramètres, sinon celui de la
+    # société.
+    def self.account_email(email : String) : String
+      email.presence || Partiduo::Api::Core.settings(Builder.system).email.strip
+    rescue Partiduo::Api::NotFound
+      email
+    end
+
+    # Accusé ou rejet d'un dépôt transmis. Appelé dans une transaction qui
+    # tient le verrou des dépôts, sur le dépôt relu (`Api.refresh`,
+    # `Api.record_outcome`, rappels de TELEDEC) ; une pièce refusée par le
+    # socle annule le tout.
+    def self.apply_outcome(filing : Filing, state : String, reason : String,
+                           attachment : Partiduo::Api::Core::AttachmentInput?, at : Time?,
+                           user_id : Int64?) : Partiduo::Api::Result(Api::FilingView)
+      return Partiduo::Api::Result(Api::FilingView).success(view(filing)) unless state == "acknowledged" || state == "rejected"
+      Partiduo::Api::Transaction.run do
+        if attachment
+          stored = Partiduo::Api::Core.store_attachment(Partiduo::Api::Actor.system, attachment)
+          next Partiduo::Api::Result(Api::FilingView).failure(stored.errors) if stored.failure?
+          filing.receipt_attachment_id = stored.value!.id
+        end
+        if state == "acknowledged"
+          filing.status = "acknowledged"
+          filing.acknowledged_at = at || Time.utc
+          event(filing, "acknowledged", attachment.try(&.filename) || "", user_id)
+        else
+          filing.status = "rejected"
+          filing.rejection_reason = reason.presence || I18n.t("teledec.events.no_reason")
+          filing.rejected_at = at || Time.utc
+          event(filing, "rejected", filing.rejection_reason.to_s, user_id)
+        end
+        filing.last_error = ""
+        filing.save!
+        Partiduo::Api::Result(Api::FilingView).success(view(filing))
+      end
     end
 
     # --- Vues ------------------------------------------------------------------
@@ -143,6 +186,9 @@ module Teledec
         das2: das2,
         details: payload.details,
         remote_id: filing.remote_id.to_s,
+        remote_status: filing.remote_status.to_s,
+        remote_url: filing.remote_url.to_s,
+        declaration_id: filing.declaration_id.to_s,
         manual: filing.manual || false,
         rejection_reason: filing.rejection_reason.to_s,
         last_error: filing.last_error.to_s,

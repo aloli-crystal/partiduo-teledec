@@ -59,11 +59,15 @@ conservé en pièce jointe du socle) ou rejetés (motif) ; historique ;
 document intangible une fois transmis (déclencheur PostgreSQL).
 
 |Transport
-|Interface abstraite `Teledec::Transport` ; TELEDEC simulé pour les
-specs. *Adaptateur réel en attente* du partenariat (demandé le
-27 septembre 2026, BLOCAGES B-TDC-001) : en repli, export de la balance au
-format d'import (CSV) et saisie de l'issue d'un dépôt fait sur le site de
-TELEDEC.
+|Interface abstraite `Teledec::Transport` ; *adaptateur réel*
+`Teledec::HttpTransport` (API partenaire de TELEDEC) : jeton OAuth2
+`client_credentials` en cache, liasse par l'API Balance (URL de la liasse
+rendue à l'utilisateur), TVA CA3 et CA12, DAS2, relevés 2571 et 2572 par
+l'API marque blanche, suivi (`declaration-status`, comptes-rendus), rappels
+de TELEDEC reçus sur `/hooks/TELEDEC/callback` (jeton de l'instance). TELEDEC
+simulé pour les specs (mêmes échanges HTTP). En repli (transport
+désactivé) : export de la balance (CSV) et saisie de l'issue d'un dépôt
+fait sur le site de TELEDEC.
 
 |Secrets
 |Identifiants de l'API chiffrés en base (AES-256-CBC puis HMAC-SHA-256,
@@ -88,8 +92,15 @@ Marten.configure do |config|
 end
 ----
 
-Brancher l'adaptateur réel (quand il existera) :
-`Teledec::Transports.current = Teledec::…Transport.new`.
+L'adaptateur réel est branché par défaut (`Teledec::Transports.current`,
+`Teledec::HttpTransport`) ; `Teledec::Transports.current = nil` désactive la
+transmission directe. Variable d'environnement facultative :
+`PARTIDUO_TELEDEC_SOURCE` (nom de partenaire déclaré dans `#SOURCE` de la
+liasse, communiqué par TELEDEC ; défaut `PARTIDUO`). Dans les paramètres de
+TELEDEC : identifiant et secret du client OAuth2, environnement (test :
+stage, ou production), email du compte TELEDEC de l'entreprise, SIRET de
+l'établissement ; l'adresse des rappels (jeton compris) y est affichée pour
+être confiée à TELEDEC.
 
 == Commandes
 
@@ -103,9 +114,11 @@ MARTEN_ENV=test DATABASE_URL='postgres:///partiduo_<base>?host=/tmp' crystal run
 crystal run manage.cr -- genmigrations teledec   # aucun écart attendu
 ----
 
-La suite d'intégration `spec/integration/sandbox_spec.cr` reste en attente
-tant que la documentation de l'API (`~/.config/partiduo/teledec/`) et les
-identifiants de test (`~/.config/partiduo/teledec-sandbox.env`) manquent.
+La suite d'intégration `spec/integration/sandbox_spec.cr` vise le stage de
+TELEDEC (jamais la production) ; elle ne s'active que si
+`~/.config/partiduo/teledec-sandbox.env` porte `TELEDEC_SANDBOX_CLIENT_ID`
+et `TELEDEC_SANDBOX_CLIENT_SECRET` (jamais affichés ni journalisés), et
+passe en attente si le stage est injoignable depuis le processus.
 
 == Licence
 

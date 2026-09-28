@@ -27,6 +27,13 @@ module Teledec
     field :fingerprint, :string, max_size: 64
     field :controls, :text, blank: true, default: "[]"
     field :remote_id, :string, max_size: 128, blank: true, default: ""
+    # Suivi chez TELEDEC (adaptateur réel) : référence envoyée (clé
+    # d'idempotence, renvoyée par les rappels), état brut normalisé,
+    # page à ouvrir par l'utilisateur, identifiant de la déclaration.
+    field :remote_reference, :string, max_size: 128, blank: true, default: "", index: true
+    field :remote_status, :string, max_size: 32, blank: true, default: ""
+    field :remote_url, :text, blank: true, default: ""
+    field :declaration_id, :string, max_size: 64, blank: true, default: "", index: true
     field :rejection_reason, :text, blank: true, default: ""
     field :last_error, :string, max_size: 255, blank: true, default: ""
     field :manual, :bool, default: false

@@ -20,20 +20,26 @@ describe "Transmission et suivi des dépôts (ADR-007 D4)" do
     S.connect
     sent = Api.transmit(S.admin, filing.id).value!
     sent.status.should eq("transmitted")
-    sent.remote_id.should eq("TD-000001")
-    deposit = S.teledec.deposits["TD-000001"]
-    deposit.submission.kind.should eq("liasse")
-    deposit.submission.fingerprint.should eq(filing.fingerprint)
-    deposit.submission.reference.should eq("partiduo-#{filing.id}-1-#{filing.fingerprint[0, 16]}")
-    deposit.credentials_env.should eq("sandbox")
-    # Pas encore d'accusé.
-    Api.refresh(S.admin, filing.id).value!.status.should eq("transmitted")
-    S.teledec.acknowledge("TD-000001")
+    sent.remote_id.should eq(S::LIASSE_ID)
+    sent.remote_url.should start_with("https://stage.teledec.fr/liasse/")
+    sent.remote_status.should eq("notcompleted")
+    deposit = S.teledec.deposits[S::LIASSE_ID]
+    deposit.form.should eq("liasse")
+    deposit.reference.should eq("partiduo-#{filing.id}-1-#{filing.fingerprint[0, 16]}")
+    deposit.env.should eq("stage")
+    deposit.email.should eq(Teledec::SimulatedTeledec::EMAIL)
+    # Pas encore d'accusé : l'utilisateur complète et envoie sur TELEDEC.
+    pending = Api.refresh(S.admin, filing.id).value!
+    pending.status.should eq("transmitted")
+    pending.remote_status.should eq("notcompleted")
+    S.teledec.acknowledge(S::LIASSE_ID)
     done = Api.refresh(S.admin, filing.id).value!
     done.status.should eq("acknowledged")
     done.acknowledged_at.should eq(Time.utc(2027, 5, 10))
+    done.remote_status.should eq("ok")
+    done.declaration_id.should eq(deposit.declaration_id.to_s)
     receipt = Api.receipt_file(S.admin, filing.id) || raise "accusé absent"
-    receipt.filename.should eq("accuse-TD-000001.pdf")
+    receipt.filename.should eq("accuse-liasse-732829320-2026-12-31.pdf")
     String.new(receipt.content).should start_with("%PDF-1.4")
     Api.events(S.admin, filing.id).map(&.status).should eq(%w[prepared transmitted acknowledged])
     # Un dépôt accusé ne se prépare plus.
@@ -48,7 +54,7 @@ describe "Transmission et suivi des dépôts (ADR-007 D4)" do
     S.connect
     filing = S.liasse
     Api.transmit(S.admin, filing.id).value!
-    S.teledec.reject("TD-000001", "SIREN inconnu de la DGFiP")
+    S.teledec.reject(S::LIASSE_ID, "SIREN inconnu de la DGFiP")
     Api.refresh_all(S.admin).should eq(1)
     rejected = Api.filing(S.admin, filing.id)
     rejected.status.should eq("rejected")
@@ -56,8 +62,11 @@ describe "Transmission et suivi des dépôts (ADR-007 D4)" do
     again = S.liasse
     again.id.should eq(filing.id)
     again.status.should eq("prepared")
-    Api.transmit(S.admin, filing.id).value!.remote_id.should eq("TD-000002")
-    S.teledec.deposits["TD-000002"].submission.reference.should start_with("partiduo-#{filing.id}-2-")
+    # TELEDEC met à jour la liasse déjà créée par l'API (même période).
+    Api.transmit(S.admin, filing.id).value!.remote_id.should eq(S::LIASSE_ID)
+    S.teledec.deposits.size.should eq(1)
+    S.teledec.deposits[S::LIASSE_ID].reference.should start_with("partiduo-#{filing.id}-2-")
+    S.teledec.deposits[S::LIASSE_ID].status.should eq("NotCompleted")
   end
 
   it "refuse de transmettre un document modifié depuis la préparation ou bloqué par un contrôle" do
@@ -79,7 +88,7 @@ describe "Transmission et suivi des dépôts (ADR-007 D4)" do
     sale
     S.connect
     filing = S.liasse
-    S.teledec.failure = "teledec.errors.transport.refused"
+    S.teledec.failure = "formulaire incomplet"
     Api.transmit(S.admin, filing.id).error_keys.should eq(["teledec.errors.transport.refused"])
     view = Api.filing(S.admin, filing.id)
     view.status.should eq("prepared")
@@ -127,6 +136,8 @@ describe "Transmission et suivi des dépôts (ADR-007 D4)" do
     Api.clear_credentials(S.admin).key_stored.should be_false
     Api.save_credentials(S::SYSTEM, Api::CredentialsInput.new("x", "", "lune")).error_keys
       .should eq(["teledec.errors.credentials.env", "teledec.errors.credentials.api_key"])
+    Api.save_credentials(S::SYSTEM, Api::CredentialsInput.new("x", "y", email: "pas-un-email", siret: "123")).error_keys
+      .should eq(["teledec.errors.credentials.email", "teledec.errors.credentials.siret"])
   end
 
   it "garde intangible le document d'un dépôt transmis (déclencheur en base)" do

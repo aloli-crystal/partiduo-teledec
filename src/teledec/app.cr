@@ -6,6 +6,9 @@ require "./money"
 require "./secrets"
 require "./transport"
 require "./payload"
+require "./remote/exchange"
+require "./remote/formats"
+require "./remote/http_transport"
 require "./models/**"
 require "./services/**"
 require "./api/**"
@@ -16,8 +19,10 @@ require "./api/**"
 # formulaires. Même plan qu'une application du cœur (DECISIONS C1) :
 # `manifest.cr`, `models/`, `migrations/`, `services/` (interne), `api/`
 # (contrat public `Teledec::Api`), `locales/` ; en plus `transport.cr`
-# (interface abstraite `Teledec::Transport`), `payload.cr` (document
-# transmis), `secrets.cr` (identifiants chiffrés) et `money.cr` (arrondis).
+# (interface abstraite `Teledec::Transport`), `remote/` (adaptateur de
+# l'API partenaire de TELEDEC : échanges HTTP, formats, jeton),
+# `payload.cr` (document transmis), `secrets.cr` (identifiants chiffrés) et
+# `money.cr` (arrondis).
 module Teledec
   VERSION = "0.1.0"
 

@@ -49,7 +49,7 @@ describe "Écran Télédéclarations sous /ext/TELEDEC/ (ADR-005 D4)" do
     page.should contain(%(data-teledec-outcome))
     browser.post("#{location}/check").status.should eq(302)
     browser.post("#{location}/transmit").status.should eq(302)
-    browser.get(location).html.should contain("La transmission directe à TELEDEC n'est pas encore disponible")
+    browser.get(location).html.should contain("La transmission directe à TELEDEC est désactivée sur cette instance")
     browser.post("#{location}/outcome", {"status" => "transmitted", "reference" => "WEB-7"}).status.should eq(302)
     page = browser.get(location).html
     page.should contain(%(data-teledec-filing="transmitted"))
@@ -68,8 +68,8 @@ describe "Écran Télédéclarations sous /ext/TELEDEC/ (ADR-005 D4)" do
     url = "/ext/TELEDEC/filings/#{filing.id}"
     browser.get(url).html.should contain(%(data-teledec-transmit))
     browser.post("#{url}/transmit").status.should eq(302)
-    browser.get(url).html.should contain("TD-000001")
-    S.teledec.acknowledge("TD-000001")
+    browser.get(url).html.should contain(S::LIASSE_ID)
+    S.teledec.acknowledge(S::LIASSE_ID)
     browser.post("#{url}/refresh").status.should eq(302)
     html = browser.get(url).html
     html.should contain(%(data-teledec-filing="acknowledged"))

@@ -26,6 +26,15 @@ module Teledec
     ENVIRONMENTS = Config::ENVIRONMENTS
     DAS2_NATURES = Config::DAS2_NATURES
 
+    # États bruts d'un dépôt chez TELEDEC (normalisés en minuscules,
+    # `teledec.remote_statuses.*`) ; `notfound` : pas encore de déclaration
+    # chez TELEDEC.
+    REMOTE_STATUSES = %w[notfound notcompleted readytobesent sent completewitherrors completewithwarnings ok accepted
+      erreur rejected]
+
+    # Chemin des rappels de TELEDEC, exposé par l'interface.
+    CALLBACK_PATH = Callbacks::PATH
+
     # Issues qu'un utilisateur peut noter pour un dépôt fait hors de
     # Partiduo.
     OUTCOMES = %w[transmitted acknowledged rejected]
@@ -92,9 +101,15 @@ module Teledec
         end
       end
       errors << FieldError.new("api_key", "teledec.errors.credentials.api_key") if key.empty? && errors.none?(&.field.==("api_key"))
+      email = input.email.strip
+      unless email.empty? || (email.size <= 255 && email.matches?(/\A[^@\s]+@[^@\s]+\.[^@\s]+\z/))
+        errors << FieldError.new("email", "teledec.errors.credentials.email")
+      end
+      siret = input.siret.delete(' ')
+      errors << FieldError.new("siret", "teledec.errors.credentials.siret") unless siret.empty? || siret.matches?(/\A\d{14}\z/)
       return Result(SettingsView).failure(errors) unless errors.empty?
 
-      credentials = Credentials.new(login, key, input.env)
+      credentials = Credentials.new(login, key, input.env, Filings.account_email(email), siret)
       checked = nil
       if transport = Transports.current
         begin
@@ -108,6 +123,9 @@ module Teledec
         settings.login = login
         settings.api_key = Secrets.encrypt(key)
         settings.env = input.env
+        settings.email = email
+        settings.siret = siret
+        settings.callback_token = Secrets.encrypt(Callbacks.new_token) if settings.callback_token.to_s.empty?
         settings.checked_at = checked
         settings.updated_by_id = actor.user_id
         settings.save!
@@ -193,13 +211,17 @@ module Teledec
 
     # Transmet un dépôt préparé à TELEDEC. Refus : dépôt non préparé,
     # document modifié depuis la préparation, contrôle bloquant, transport
-    # absent (adaptateur réel en attente, BLOCAGES B-TDC-001), identifiants
+    # désactivé (`Transports.current = nil`), identifiants
     # absents ou illisibles, erreur de TELEDEC (notée dans l'historique).
     # L'appel à TELEDEC a lieu hors transaction ; l'enregistrement qui suit
     # prend le verrou des dépôts, relit le dépôt et revérifie son statut et
     # son empreinte (une préparation concurrente l'emporte : le conflit est
     # noté dans l'historique avec la référence de TELEDEC).
-    def self.transmit(actor : Actor, id : Int64) : Result(FilingView)
+    #
+    # `base_url` (`https://dossier.exemple.fr`) : adresse publique de
+    # l'instance, pour que TELEDEC y rappelle (`Callbacks::PATH`) ; sans
+    # elle, le suivi se fait par `refresh`.
+    def self.transmit(actor : Actor, id : Int64, base_url : String? = nil) : Result(FilingView)
       Guard.authorize!(actor, TRANSMIT, module_code: MODULE_CODE)
       filing = find(id)
       authorize_sources!(actor, filing.kind.to_s)
@@ -222,14 +244,17 @@ module Teledec
       # puis préparé de nouveau est un nouvel envoi), empreinte.
       fingerprint = filing.fingerprint.to_s
       attempt = FilingEvent.filter(filing_id: filing.id, status: "transmitted").count + 1
+      year_end = filing.fiscal_year_id.try { |year_id| Builder.find_fiscal_year(year_id.to_i64) }.try(&.ends_on)
       submission = Submission.new("partiduo-#{filing.id}-#{attempt}-#{fingerprint[0, 16]}", filing.kind.to_s,
-        filing.forms.to_s.split(','), filing.payload.to_s, fingerprint)
-      remote_id = begin
+        filing.forms.to_s.split(','), filing.payload.to_s, fingerprint, due_on: filing.due_on.try { |day| Builder.day(day) },
+        year_end: year_end.try { |day| Builder.day(day) }, callback_url: Callbacks.url(base_url))
+      submitted = begin
         transport.submit(credentials, submission)
       rescue ex : TransportError
         note_error(id, ex.key, actor, event: true)
         return Result(FilingView).failure(FieldError.base(ex.key, ex.params))
       end
+      remote_id = submitted.remote_id
       recorded = Partiduo::Api::Transaction.run do
         Filings.lock!
         current = find(id)
@@ -238,6 +263,10 @@ module Teledec
         end
         current.status = "transmitted"
         current.remote_id = remote_id
+        current.remote_reference = submission.reference
+        current.remote_url = submitted.url
+        current.remote_status = submitted.remote_status
+        current.declaration_id = ""
         current.last_error = ""
         current.transmitted_at = Time.utc
         current.transmitted_by_id = actor.user_id
@@ -273,7 +302,6 @@ module Teledec
         note_error(id, ex.key, actor, event: false)
         return Result(FilingView).failure(FieldError.base(ex.key, ex.params))
       end
-      return Result(FilingView).success(Filings.view(find(id))) unless remote.state == "acknowledged" || remote.state == "rejected"
       attachment = remote.receipt.try do |receipt|
         Partiduo::Api::Core::AttachmentInput.new(receipt.filename, receipt.content_type, IO::Memory.new(receipt.content))
       end
@@ -282,6 +310,13 @@ module Teledec
         current = find(id)
         if current.status != "transmitted" || current.manual || current.remote_id != remote_id
           next status_failure(current)
+        end
+        current.remote_status = remote.remote_status[0, 32] unless remote.remote_status.empty?
+        current.declaration_id = remote.declaration_id[0, 64] unless remote.declaration_id.empty?
+        current.last_error = ""
+        unless remote.state == "acknowledged" || remote.state == "rejected"
+          current.save!
+          next Result(FilingView).success(Filings.view(current))
         end
         apply_outcome(current, remote.state, remote.reason, attachment, remote.at, actor)
       end
@@ -302,6 +337,18 @@ module Teledec
         Log.warn(exception: ex) { "TELEDEC : suivi du dépôt #{filing.id} interrompu" }
         false
       end
+    end
+
+    # Rappel de TELEDEC (webhook, `POST` de `Callbacks::PATH`) : pas
+    # d'acteur, l'appel est authentifié par le jeton des rappels
+    # (`presented`, en `Basic`, `Bearer` ou paramètre `token`). Rend
+    # `unauthorized`, `invalid` (corps illisible), `ignored` (aucun dépôt
+    # ne correspond) ou `ok` ; idempotent sur l'identifiant de la
+    # déclaration. `ModuleDisabled` si l'extension est inactive.
+    def self.callback(presented : String?, body : String) : String
+      raise Partiduo::Api::ModuleDisabled.new(MODULE_CODE) unless Callbacks.active?
+      return "unauthorized" unless Callbacks.authenticate(presented)
+      Callbacks.receive(body)
     end
 
     # Note l'issue d'un dépôt fait hors de Partiduo (repli : balance
@@ -432,33 +479,11 @@ module Teledec
       nil
     end
 
-    # Accusé ou rejet d'un dépôt transmis. Appelé dans une transaction qui
-    # tient le verrou des dépôts, sur le dépôt relu (`refresh`,
-    # `record_outcome`) ; une pièce refusée par le socle annule le tout.
+    # Accusé ou rejet d'un dépôt transmis (`Filings.apply_outcome`).
     private def self.apply_outcome(filing : Filing, state : String, reason : String,
                                    attachment : Partiduo::Api::Core::AttachmentInput?, at : Time?,
                                    actor : Actor) : Result(FilingView)
-      return Result(FilingView).success(Filings.view(filing)) unless state == "acknowledged" || state == "rejected"
-      Partiduo::Api::Transaction.run do
-        if attachment
-          stored = Partiduo::Api::Core.store_attachment(Actor.system, attachment)
-          next Result(FilingView).failure(stored.errors) if stored.failure?
-          filing.receipt_attachment_id = stored.value!.id
-        end
-        if state == "acknowledged"
-          filing.status = "acknowledged"
-          filing.acknowledged_at = at || Time.utc
-          Filings.event(filing, "acknowledged", attachment.try(&.filename) || "", actor.user_id)
-        else
-          filing.status = "rejected"
-          filing.rejection_reason = reason.presence || I18n.t("teledec.events.no_reason")
-          filing.rejected_at = at || Time.utc
-          Filings.event(filing, "rejected", filing.rejection_reason.to_s, actor.user_id)
-        end
-        filing.last_error = ""
-        filing.save!
-        Result(FilingView).success(Filings.view(filing))
-      end
+      Filings.apply_outcome(filing, state, reason, attachment, at, actor.user_id)
     end
 
     private def self.settings_view(settings : Settings, manager : Bool) : SettingsView
@@ -470,6 +495,9 @@ module Teledec
         das2_threshold: settings.das2_threshold || Config::DAS2_THRESHOLD,
         env: settings.env.to_s,
         login: manager ? settings.login.to_s : "",
+        email: manager ? settings.email.to_s : "",
+        siret: manager ? settings.siret.to_s : "",
+        callback_path: manager ? Callbacks.path(settings).to_s : "",
         key_stored: !settings.api_key.to_s.empty?,
         checked_at: settings.checked_at,
         transport: Transports.current.try(&.name),

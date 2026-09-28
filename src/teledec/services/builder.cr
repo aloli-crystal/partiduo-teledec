@@ -183,6 +183,11 @@ module Teledec
       end
       forms = Config.forms(input.kind, "")
       boxes = view.boxes.reject(&.amount.zero?).to_h { |box| {box.code, Money.euros_text(box.amount)} }
+      # Cases qu'aucun code du formulaire de TELEDEC ne reçoit : la
+      # déclaration serait incomplète.
+      Remote::Formats.unmapped(input.kind, boxes, view.date_to.year).each do |box|
+        controls << error("teledec.controls.box_unmapped", {"box" => box, "form" => forms.first})
+      end
       fiscal_year = fiscal_year_for(view.date_to)
       due_on = input.kind == "vat_ca3" ? Calendar.vat_monthly(view.date_to) : Calendar.vat_annual(view.date_to)
       details = {"periodicity" => view.periodicity, "vat_return_id" => id.to_s}

@@ -56,3 +56,8 @@ end
 # Toutes les routes exigent au moins `teledec.return.read` ; le contrat
 # vérifie ensuite la permission propre à chaque commande.
 PartiduoUi::Extensions.mount Teledec::CODE, Teledec::Ui::ROUTES, permission: Teledec::Api::READ
+
+# Rappels de TELEDEC (webhook) : appel de machine à machine, sans session,
+# donc hors de `/ext/` (qui exige un utilisateur connecté) ; authentifié par
+# le jeton des rappels (`Teledec::Ui::CallbackHandler`).
+Marten.routes.path Teledec::Api::CALLBACK_PATH, Teledec::Ui::CallbackHandler, name: "teledec_callback"

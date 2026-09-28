@@ -52,7 +52,7 @@ describe "Écrans TELEDEC : droits, rejets et cas limites" do
     S.connect
     filing = S.liasse
     Api.transmit(S.admin, filing.id).value!
-    S.teledec.reject("TD-000001", "SIREN inconnu de la DGFiP")
+    S.teledec.reject(S::LIASSE_ID, "SIREN inconnu de la DGFiP")
     url = "/ext/TELEDEC/filings/#{filing.id}"
     browser.post("#{url}/refresh").status.should eq(302)
     html = browser.get(url).html

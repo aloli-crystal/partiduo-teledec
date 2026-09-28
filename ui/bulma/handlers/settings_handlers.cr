@@ -42,6 +42,9 @@ module Teledec
             "das2_accounts"  => view.das2_accounts.map { |prefix, nature| "#{prefix}=#{nature}" }.join("\n"),
             "das2_threshold" => fmt.input_number(view.das2_threshold),
             "login"          => view.login.presence,
+            "email"          => view.email.presence,
+            "siret"          => view.siret.presence,
+            "callback_url"   => view.callback_path.presence.try { |path| "#{request.scheme}://#{request.host}#{path}" },
             "key_stored"     => view.key_stored ? "1" : nil,
             "checked_at"     => view.checked_at.try { |time| fmt.datetime(time) },
             "transport"      => view.transport,
@@ -73,7 +76,8 @@ module Teledec
       end
 
       def post
-        input = Api::CredentialsInput.new(login: field("login"), api_key: field("api_key"), env: field("env"))
+        input = Api::CredentialsInput.new(login: field("login"), api_key: field("api_key"), env: field("env"),
+          email: field("email"), siret: field("siret"))
         result = Api.save_credentials(current.actor, input)
         if result.success?
           flash["success"] = I18n.t("teledec_ui.flash.credentials")

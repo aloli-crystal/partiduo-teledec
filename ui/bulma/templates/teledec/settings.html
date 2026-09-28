@@ -1,4 +1,4 @@
-{# SPDX-License-Identifier: AGPL-3.0-or-later. Paramètres de TELEDEC (ADR-007 D4) : régime d'imposition (formulaires de la liasse), régime de TVA (CA3, CA12), option du dépôt des comptes au greffe, comptes et seuil de la DAS2 ; identifiants de l'API partenaire, chiffrés en base et jamais réaffichés, environnement de test ou de production toujours affiché. #}{% extend "ui/base.html" %}
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Paramètres de TELEDEC (ADR-007 D4) : régime d'imposition (formulaires de la liasse), régime de TVA (CA3, CA12), option du dépôt des comptes au greffe, comptes et seuil de la DAS2 ; identifiants de l'API partenaire (client OAuth2), chiffrés en base et jamais réaffichés, environnement de test ou de production toujours affiché, compte TELEDEC de l'entreprise, SIRET, adresse des rappels de TELEDEC (jeton compris, réservée aux gestionnaires). #}{% extend "ui/base.html" %}
 {% block title %}{{ title }}{% endblock title %}
 {% block crumbs %}{% include "ui/_crumbs.html" %}{% endblock crumbs %}
 {% block heading %}{{ title }} <span class="pd-ext">TELEDEC</span>{% endblock heading %}
@@ -37,9 +37,15 @@
         {% if errors.login %}<p class="help is-danger">{{ errors.login }}</p>{% endif %}</div>
       <div class="field"><label class="label" for="pd-teledec-key">{% translate "teledec_ui.settings.api_key" %}</label><input class="input" type="password" id="pd-teledec-key" name="api_key" value="" autocomplete="new-password" placeholder="{% if settings.key_stored %}{% translate 'teledec_ui.settings.key_stored' %}{% endif %}"{% if errors.api_key %} aria-invalid="true"{% endif %}>
         {% if errors.api_key %}<p class="help is-danger">{{ errors.api_key }}</p>{% endif %}</div>
+      <div class="field"><label class="label" for="pd-teledec-email">{% translate "teledec_ui.settings.email" %}</label><input class="input" type="email" id="pd-teledec-email" name="email" value="{{ settings.email }}"{% if errors.email %} aria-invalid="true"{% endif %}>
+        <p class="help">{% translate "teledec_ui.settings.email_help" %}</p>
+        {% if errors.email %}<p class="help is-danger">{{ errors.email }}</p>{% endif %}</div>
+      <div class="field"><label class="label" for="pd-teledec-siret">{% translate "teledec_ui.settings.siret" %}</label><input class="input pd-mono" type="text" inputmode="numeric" id="pd-teledec-siret" name="siret" value="{{ settings.siret }}"{% if errors.siret %} aria-invalid="true"{% endif %}>
+        {% if errors.siret %}<p class="help is-danger">{{ errors.siret }}</p>{% endif %}</div>
       <div class="field"><label class="label" for="pd-teledec-env">{% translate "teledec_ui.settings.env" %}</label><div class="select"><select id="pd-teledec-env" name="env">{% for option in environments %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div></div>
       <button class="button is-primary pd-touch" type="submit">{% translate "ui.forms.save" %}</button>
     </form>
+    {% if settings.callback_url %}<div class="field mt-3" data-teledec-callback><label class="label" for="pd-teledec-callback">{% translate "teledec_ui.settings.callback" %}</label><input class="input pd-mono is-size-7" type="text" id="pd-teledec-callback" value="{{ settings.callback_url }}" readonly><p class="help">{% translate "teledec_ui.settings.callback_help" %}</p></div>{% endif %}
     {% if settings.key_stored %}<form method="post" action="{% url 'teledec:clear_credentials' %}" class="mt-3">{% csrf_input %}<button class="button is-danger is-light pd-touch" type="submit">{% translate "teledec_ui.settings.clear" %}</button></form>{% endif %}
   </div>
 </section>

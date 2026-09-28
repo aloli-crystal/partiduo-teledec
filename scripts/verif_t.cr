@@ -42,7 +42,8 @@ module VerifT
   # relève de son état, comme la DGFiP le fait après quelques minutes.
   class AutoAckTeledec < Teledec::SimulatedTeledec
     def status(credentials : Teledec::Credentials, remote_id : String) : Teledec::RemoteStatus
-      acknowledge(remote_id) unless states.has_key?(remote_id)
+      deposit = deposits[remote_id]?
+      acknowledge(remote_id) if deposit && deposit.report.nil?
       super
     end
   end
@@ -296,8 +297,12 @@ module VerifT
         redirect?(browser.post("/ext/TELEDEC/settings", values), "/ext/TELEDEC/")
       end
       check("identifiants de l'API enregistrés (clé jamais réaffichée)") do
+        # Compte TELEDEC de test et SIRET (SIREN de l'instance, établissement 00017).
+        siren = Partiduo::Api::Core.settings(system).siren.delete(' ')
         response = browser.post("/ext/TELEDEC/settings/credentials", {"login" => Teledec::SimulatedTeledec::LOGIN,
-                                                                      "api_key" => Teledec::SimulatedTeledec::API_KEY, "env" => "sandbox"})
+                                                                      "api_key" => Teledec::SimulatedTeledec::API_KEY, "env" => "sandbox",
+                                                                      "email" => Teledec::SimulatedTeledec::EMAIL,
+                                                                      "siret" => siren.size == 9 ? "#{siren}00017" : ""})
         next redirect?(response) unless response.status_code == 302
         page = browser.get("/ext/TELEDEC/settings")
         next "clé affichée" if page.body.includes?(Teledec::SimulatedTeledec::API_KEY)

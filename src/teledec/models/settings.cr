@@ -18,6 +18,13 @@ module Teledec
     field :login, :string, max_size: 255, blank: true, default: ""
     # `v1:<base64>` : clé de l'API chiffrée ; vide si aucune.
     field :api_key, :text, blank: true, default: ""
+    # Compte TELEDEC de l'entreprise (ses déclarations y sont rattachées ;
+    # défaut : email de la société) et SIRET de l'établissement déclarant.
+    field :email, :string, max_size: 255, blank: true, default: ""
+    field :siret, :string, max_size: 14, blank: true, default: ""
+    # `v1:<base64>` : jeton des rappels de TELEDEC, chiffré ; créé à
+    # l'enregistrement des identifiants.
+    field :callback_token, :text, blank: true, default: ""
     field :checked_at, :date_time, blank: true, null: true
     field :updated_by_id, :big_int, blank: true, null: true
 

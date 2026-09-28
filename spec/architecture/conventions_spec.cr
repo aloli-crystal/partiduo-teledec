@@ -51,6 +51,7 @@ describe "Conventions de l'extension TELEDEC" do
     Teledec::Api::ENVIRONMENTS.each { |code| dynamic << "teledec.environments.#{code}" }
     Teledec::Api::DAS2_NATURES.each { |code| dynamic << "teledec.das2_natures.#{code}" }
     %w[amount tax advances balance threshold].each { |code| dynamic << "teledec_ui.details.#{code}" }
+    (Teledec::Api::REMOTE_STATUSES + ["other"]).each { |code| dynamic << "teledec.remote_statuses.#{code}" }
     Partiduo::Modules[Teledec::CODE].permissions.each do |name|
       dynamic << "teledec.permissions.#{name.lchop("teledec.")}"
     end

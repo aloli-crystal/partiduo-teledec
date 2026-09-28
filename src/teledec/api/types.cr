@@ -32,9 +32,12 @@ module Teledec
       das2_accounts : Hash(String, String)? = nil,
       das2_threshold : BigDecimal? = nil
 
-    # Identifiants de l'API partenaire. `api_key` vide garde la clé
-    # enregistrée.
-    record CredentialsInput, login : String, api_key : String, env : String = "sandbox"
+    # Identifiants de l'API partenaire : identifiant et secret du client
+    # OAuth2 (`login`, `api_key` ; vide garde le secret enregistré),
+    # environnement, email du compte TELEDEC de l'entreprise (vide : celui
+    # de la société) et SIRET de l'établissement déclarant (facultatif).
+    record CredentialsInput, login : String, api_key : String, env : String = "sandbox", email : String = "",
+      siret : String = ""
 
     # Issue d'un dépôt fait hors de Partiduo (repli, sur le site de
     # TELEDEC) : `transmitted`, `acknowledged` (accusé facultatif en pièce
@@ -93,6 +96,9 @@ module Teledec
       das2 : Array(Das2LineView),
       details : Hash(String, String),
       remote_id : String,
+      remote_status : String,
+      remote_url : String,
+      declaration_id : String,
       manual : Bool,
       rejection_reason : String,
       last_error : String,
@@ -201,7 +207,8 @@ module Teledec
       end
     end
 
-    # Paramètres ; `login` est vide pour qui n'a pas
+    # Paramètres ; `login`, `email`, `siret` et `callback_path` (chemin des
+    # rappels de TELEDEC, jeton compris) sont vides pour qui n'a pas
     # `teledec.settings.manage`.
     record SettingsView,
       tax_system : String,
@@ -211,6 +218,9 @@ module Teledec
       das2_threshold : BigDecimal,
       env : String,
       login : String,
+      email : String,
+      siret : String,
+      callback_path : String,
       key_stored : Bool,
       checked_at : Time?,
       transport : String?,

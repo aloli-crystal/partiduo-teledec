@@ -1,4 +1,4 @@
-{# SPDX-License-Identifier: AGPL-3.0-or-later. Fiche d'un dépôt TELEDEC (ADR-007 D4) : statut (préparé, transmis, accusé de réception, rejeté avec motif), contrôles bloquants et avertissements, contenu du document préparé (identité, balance avant clôture, cases de la TVA ou de la 2035, bénéficiaires de la DAS2, montants d'IS), historique ; contrôler de nouveau, transmettre, actualiser le statut, préparer de nouveau un dépôt rejeté, noter un dépôt fait hors de Partiduo (repli), télécharger le document et l'accusé. #}{% extend "ui/base.html" %}
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Fiche d'un dépôt TELEDEC (ADR-007 D4) : statut (préparé, transmis, accusé de réception, rejeté avec motif), contrôles bloquants et avertissements, contenu du document préparé (identité, balance avant clôture, cases de la TVA ou de la 2035, bénéficiaires de la DAS2, montants d'IS), historique ; page de la déclaration chez TELEDEC (vérification et envoi par l'utilisateur) et état chez TELEDEC ; contrôler de nouveau, transmettre, actualiser le statut, préparer de nouveau un dépôt rejeté, noter un dépôt fait hors de Partiduo (repli), télécharger le document et l'accusé. #}{% extend "ui/base.html" %}
 {% block title %}{{ title }}{% endblock title %}
 {% block crumbs %}{% include "ui/_crumbs.html" %}{% endblock crumbs %}
 {% block heading %}{{ title }} <span class="pd-ext">TELEDEC</span>{% endblock heading %}
@@ -20,6 +20,7 @@
       {% if details %}{% for detail in details %}<dt>{{ detail.label }}</dt><dd>{{ detail.value }}</dd>{% endfor %}{% endif %}
       <dt>{% translate "teledec_ui.filing.prepared_at" %}</dt><dd>{{ filing.prepared_at }}</dd>
       {% if filing.transmitted_at %}<dt>{% translate "teledec_ui.filing.transmitted_at" %}</dt><dd>{{ filing.transmitted_at }}{% if filing.remote_id %} · <span class="pd-mono" data-teledec-remote>{{ filing.remote_id }}</span>{% endif %}</dd>{% endif %}
+      {% if filing.remote_status %}<dt>{% translate "teledec_ui.filing.remote_status" %}</dt><dd data-teledec-remote-status="{{ filing.remote_status_code }}">{{ filing.remote_status }}</dd>{% endif %}
       {% if filing.acknowledged %}<dt>{% translate "teledec_ui.filing.acknowledged_at" %}</dt><dd>{{ filing.acknowledged }}</dd>{% endif %}
       {% if filing.rejected_at %}<dt>{% translate "teledec_ui.filing.rejected_at" %}</dt><dd>{{ filing.rejected_at }}</dd>{% endif %}
       <dt>{% translate "teledec_ui.filing.fingerprint" %}</dt><dd class="pd-mono is-size-7">{{ filing.fingerprint }}</dd>
@@ -27,6 +28,7 @@
     <div class="buttons mt-3">
       <a class="button pd-touch" href="{{ export_url }}">{% include "ui/_icon.html" with name="download" %}<span>{% translate "teledec_ui.actions.export" %}</span></a>
       {% if balance_url %}{% if can_prepare %}<a class="button pd-touch" href="{{ balance_url }}">{% include "ui/_icon.html" with name="download" %}<span>{% translate "teledec_ui.actions.balance" %}</span></a>{% endif %}{% endif %}
+      {% if filing.remote_url %}{% if filing.transmitted %}<a class="button is-primary is-light pd-touch" href="{{ filing.remote_url }}" target="_blank" rel="noopener noreferrer" data-teledec-open>{% include "ui/_icon.html" with name="send" %}<span>{% translate "teledec_ui.actions.open_remote" %}</span></a>{% endif %}{% endif %}
       {% if filing.receipt %}<a class="button is-success is-light pd-touch" href="{{ receipt_url }}" data-teledec-receipt>{% include "ui/_icon.html" with name="paperclip" %}<span>{% translate "teledec_ui.actions.receipt" %}</span></a>{% endif %}
       <a class="button is-text pd-touch" href="{{ back_url }}">{% translate "teledec_ui.actions.back" %}</a>
     </div>

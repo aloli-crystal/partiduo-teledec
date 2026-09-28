@@ -16,10 +16,10 @@ end
 private class ConcurrentPreparation < Teledec::SimulatedTeledec
   property during_submit : Proc(Nil)? = nil
 
-  def submit(credentials : Teledec::Credentials, submission : Teledec::Submission) : String
-    remote_id = super
+  def submit(credentials : Teledec::Credentials, submission : Teledec::Submission) : Teledec::Submitted
+    submitted = super
     during_submit.try(&.call)
-    remote_id
+    submitted
   end
 end
 
@@ -98,7 +98,7 @@ describe "Relecture du lot T : cycle des dépôts" do
       after.status.should eq("prepared")
       after.fingerprint.should_not eq(filing.fingerprint)
       Api.events(S.admin, filing.id).map(&.status).should eq(%w[prepared prepared error])
-      Api.events(S.admin, filing.id).last.detail.should contain("TD-000001")
+      Api.events(S.admin, filing.id).last.detail.should contain(S::LIASSE_ID)
     end
   end
 

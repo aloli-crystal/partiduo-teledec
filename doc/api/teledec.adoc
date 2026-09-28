@@ -9,7 +9,7 @@ Contrat public de l'extension (`src/teledec/api/teledec.cr`, types dans
 `types.cr`), sur le modèle de `Partiduo::Api` : acteur en premier argument,
 contrôle d'accès en première ligne, vues immuables ; `ModuleDisabled` si
 l'extension est inactive. Décisions : `../partiduo-app/DECISIONS.adoc`,
-D-TDC-001 à D-TDC-009.
+D-TDC-001 à D-TDC-022.
 
 == Permissions
 
@@ -32,10 +32,17 @@ D-TDC-001 à D-TDC-009.
   environnement, identifiant (`login`, rendu aux seuls titulaires de
   `teledec.settings.manage`, vide sinon), `key_stored`, transport branché.
 * `update_settings(actor, SettingsInput)`.
-* `save_credentials(actor, CredentialsInput(login, api_key, env))` —
-  chiffrés ; vérifiés par le transport s'il est branché ; clé vide : clé
-  enregistrée gardée (`teledec.errors.credentials.unreadable` si elle ne se
-  déchiffre plus). `clear_credentials(actor)`.
+* `save_credentials(actor, CredentialsInput(login, api_key, env, email, siret))` —
+  `login` et `api_key` : identifiant et secret du client OAuth2 de TELEDEC,
+  chiffrés ; vérifiés par le transport s'il est branché (un jeton est
+  demandé) ; secret vide : secret enregistré gardé
+  (`teledec.errors.credentials.unreadable` s'il ne se déchiffre plus) ;
+  `email` : compte TELEDEC de l'entreprise (vide : email de la société,
+  `teledec.errors.credentials.email`) ; `siret` : 14 chiffres ou vide
+  (`teledec.errors.credentials.siret`). Crée le jeton des rappels s'il n'y
+  en a pas. `clear_credentials(actor)`.
+* `SettingsView#email`, `#siret`, `#callback_path` (chemin des rappels,
+  jeton compris) : vides pour qui n'a pas `teledec.settings.manage`.
 
 == Déclarations
 
@@ -60,7 +67,8 @@ D-TDC-001 à D-TDC-009.
   (`teledec.errors.filing.locked`).
 * `check(actor, id)` — recalcule : `teledec.controls.changed` si le
   document a changé depuis la préparation.
-* `transmit(actor, id)` — refus : statut, document changé, contrôle
+* `transmit(actor, id, base_url = nil)` — `base_url` : adresse publique de
+  l'instance, pour l'adresse de rappel envoyée à TELEDEC (`auth.url`). Refus : statut, document changé, contrôle
   bloquant, transport absent (`teledec.errors.transport.unavailable`),
   identifiants absents ou illisibles (`teledec.errors.credentials.missing`,
   `.unreadable`), erreur du transport (notée dans l'historique), dépôt
@@ -68,11 +76,24 @@ D-TDC-001 à D-TDC-009.
   référence TELEDEC notée dans l'historique). Clé d'idempotence :
   `partiduo-<dépôt>-<rang>-<empreinte>`. Toute transition prend le verrou
   des dépôts et relit le dépôt (DECISIONS D-TDC-013).
-* `refresh(actor, id)`, `refresh_all(actor)` — accusé (pièce jointe du
-  socle) ou rejet (motif) ; `refresh_all` isole chaque dépôt.
+* `refresh(actor, id)`, `refresh_all(actor)` — état chez TELEDEC
+  (`FilingView#remote_status`, `REMOTE_STATUSES`), accusé (pièce jointe du
+  socle) ou rejet (motif : erreurs de la DGFiP) ; `refresh_all` isole chaque
+  dépôt.
+* `callback(presented_token, body) : String` — rappel de TELEDEC, sans
+  acteur, authentifié par le jeton des rappels ; rend `unauthorized`,
+  `invalid`, `ignored` ou `ok` ; idempotent sur l'identifiant de la
+  déclaration ; `ModuleDisabled` si l'extension est inactive. Servi par
+  l'interface sur `CALLBACK_PATH` (`/hooks/TELEDEC/callback`, hors de
+  `/ext/`, sans session ni jeton CSRF ; jeton en `Basic`, `Bearer` ou
+  paramètre `token`).
 * `record_outcome(actor, id, OutcomeInput)` — repli : transmis (référence),
   accusé (fichier facultatif), rejeté (motif obligatoire) ; une seule
   transaction : une pièce refusée laisse le dépôt préparé.
+* `FilingView#remote_id` : clé de suivi `<formulaire>:<siren>:<fin>[:<échéance>]` ;
+  `#remote_url` : page de la déclaration chez TELEDEC, à ouvrir par
+  l'utilisateur pour vérifier et envoyer ; `#declaration_id` : identifiant
+  chez TELEDEC.
 * `filings(actor, fiscal_year_id?) : Array(FilingSummaryView)` (en-tête,
   statut, contrôles ; document non relu), `filing(actor, id) : FilingView`,
   `events(actor, id)`.
@@ -89,16 +110,49 @@ D-TDC-001 à D-TDC-009.
 ----
 abstract class Teledec::Transport
   abstract def name : String
-  abstract def check(credentials : Credentials) : Nil                   # TransportError
-  abstract def submit(credentials : Credentials, submission : Submission) : String # identifiant du dépôt
-  abstract def status(credentials : Credentials, remote_id : String) : RemoteStatus # pending, acknowledged, rejected
+  abstract def check(credentials : Credentials) : Nil                            # TransportError
+  abstract def submit(credentials : Credentials, submission : Submission) : Submitted # remote_id, url, remote_status
+  abstract def status(credentials : Credentials, remote_id : String) : RemoteStatus  # pending, acknowledged, rejected
 end
 
-Teledec::Transports.current = … # nil tant que l'adaptateur réel n'existe pas
+Teledec::Transports.current = … # Teledec::HttpTransport par défaut ; nil : repli
 ----
 
-`TransportError#key` est une clé i18n (`teledec.errors.transport.*`).
-`Credentials#to_s` masque la clé.
+`TransportError#key` est une clé i18n (`teledec.errors.transport.*` :
+`credentials`, `refused`, `unreachable`, `source`, `account`, `email`,
+`siret`, `invalid`, `unsupported`). `Credentials#to_s` masque le secret.
+
+=== Adaptateur réel `Teledec::HttpTransport`
+
+[cols="1,3",options="header"]
+|===
+|Échange |Traduction
+
+|Jeton |`POST https://auth.partners.teledec.fr/oauth2/token`, `Basic`,
+`grant_type=client_credentials`, scopes `stage/…` (environnement de test)
+ou `prod/…` ; cache jusqu'à `expires_in` moins une minute ; 401 : nouveau
+jeton, appel rejoué une fois.
+|Liasse |`POST /service/liasse` (texte) : `#SOURCE`, `#VERSION`, `#EMAIL`,
+`#NOM`, `#SIRET` (obligatoire ici), `#CATEGORIE-FISCALE` et
+`#REEL-NORMAL-OU-SIMPLIFIE` (d'après les formulaires), dates d'exercice,
+forme juridique, adresse, `#AFFICHAGE-BOUTON-ENVOYER`, `#REFERENCE` ;
+balance `compte;libellé;0;0;débit;crédit;solde débit;solde crédit` ;
+2035 préparée en bloc JSON `zones_formulaires`. Réponse : URL de la liasse.
+|TVA, DAS2, IS |`POST /service/declaration-marque-blanche` (JSON `auth`,
+`identity`, `period`, bloc `3310CA3`, `3517SCA12`, `DAS2`, `2571`, `2572`) ;
+codes par millésime (`Remote::Formats`) ; lien demandé
+(`retournerLien`). Une case de TVA sans code bloque la préparation
+(`teledec.controls.box_unmapped`).
+|Suivi |`GET /service/declaration-status` (404 : pas encore de
+déclaration) ; accepté ou rejeté : compte-rendu le plus récent
+(`compteRendus`, sinon `/service/recuperation-liste-compterendus`) — accusé
+PDF, erreurs de la DGFiP (`declarationErreurs`).
+|Greffe |pas de route documentée : `teledec.errors.transport.unsupported`.
+|===
+
+États : `NotCompleted`, `ReadyToBeSent`, `Sent` → transmis (en attente) ;
+`OK`, `Accepted`, `CompleteWithWarnings` → accusé ; `ERREUR`, `Rejected`,
+`CompleteWithErrors` → rejeté (casse indifférente).
 
 == Document transmis
 
@@ -109,7 +163,9 @@ empreinte SHA-256 du JSON.
 
 == Base
 
-Tables `teledec_settings` (ligne unique), `teledec_filing` (valeurs
+Tables `teledec_settings` (ligne unique ; email du compte TELEDEC, SIRET,
+jeton des rappels chiffré), `teledec_filing` (suivi chez TELEDEC :
+`remote_reference`, `remote_status`, `remote_url`, `declaration_id` ; valeurs
 contrôlées, clés étrangères vers `core_attachment` (accusé),
 `core_fiscal_year` et `auth_user` (auteurs, `ON DELETE SET NULL`), déclencheur
 `teledec_filing_guard` : document intangible une fois transmis, accusé

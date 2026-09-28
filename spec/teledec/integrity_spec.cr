@@ -131,7 +131,7 @@ describe "Intégrité des tables teledec_* en base (migration 0001)" do
     S.connect
     filing = S.liasse
     Api.transmit(S.admin, filing.id).value!
-    S.teledec.acknowledge("TD-000001")
+    S.teledec.acknowledge(S::LIASSE_ID)
     receipt_id = Api.refresh(S.admin, filing.id).value!.receipt_attachment_id || raise "accusé absent"
     sql_error("DELETE FROM core_attachment WHERE id = $1", receipt_id).to_s.should contain("teledec_filing_receipt_fk")
     # Le modèle passe par le même déclencheur que le SQL brut.
