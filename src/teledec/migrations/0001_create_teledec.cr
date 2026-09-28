@@ -7,8 +7,9 @@
 # statuts et environnements contrôlés ; un dépôt transmis a son identifiant
 # chez TELEDEC (sauf dépôt noté à la main), un dépôt rejeté son motif ;
 # l'accusé est une pièce jointe du socle (clé étrangère vers
-# `core_attachment`, ADR-006 D1) ; un dépôt transmis ou accusé garde son
-# document (déclencheur `teledec_filing_guard`).
+# `core_attachment`, ADR-006 D1 ; exercice et auteurs : migration 0002) ;
+# un dépôt transmis ou accusé garde son document (déclencheur
+# `teledec_filing_guard`).
 class Migration::Teledec::V0001 < Marten::Migration
   depends_on :core, "0003_period_guard_fiscal_year_move"
 

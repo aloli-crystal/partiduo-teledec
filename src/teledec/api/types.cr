@@ -134,6 +134,48 @@ module Teledec
       end
     end
 
+    # En-tête d'un dépôt pour les listes (`Api.filings`) : statut, période,
+    # contrôles, sans le document (balance, cases, DAS2).
+    record FilingSummaryView,
+      id : Int64,
+      key : String,
+      kind : String,
+      forms : Array(String),
+      fiscal_year_id : Int64?,
+      year : Int32,
+      number : Int32,
+      period_from : Time,
+      period_to : Time,
+      due_on : Time?,
+      status : String,
+      controls : Array(ControlView),
+      remote_id : String,
+      manual : Bool,
+      prepared_at : Time,
+      transmitted_at : Time?,
+      acknowledged_at : Time?,
+      rejected_at : Time? do
+      def ready? : Bool
+        controls.none?(&.error?)
+      end
+
+      def errors : Array(ControlView)
+        controls.select(&.error?)
+      end
+
+      def warnings : Array(ControlView)
+        controls.reject(&.error?)
+      end
+
+      def kind_key : String
+        "teledec.kinds.#{kind}"
+      end
+
+      def status_key : String
+        "teledec.statuses.#{status}"
+      end
+    end
+
     # Échéance d'un exercice : déclaration attendue, date limite, dépôt
     # s'il existe. `vat_return_id` : déclaration de TVA close de la
     # Comptabilité pour la période (sinon à préparer au lot 4 d'abord).
@@ -159,6 +201,8 @@ module Teledec
       end
     end
 
+    # Paramètres ; `login` est vide pour qui n'a pas
+    # `teledec.settings.manage`.
     record SettingsView,
       tax_system : String,
       vat_system : String,

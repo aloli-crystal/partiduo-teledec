@@ -62,6 +62,7 @@ nl:
         unknown: "Onbekend boekjaar of boekjaar zonder periodes."
       year:
         blank: "Geef het kalenderjaar op."
+        invalid: "Ongeldig kalenderjaar (2000 tot 2100)."
       number:
         invalid: "Voorschotnummer van 1 tot 4."
       amount:
@@ -81,6 +82,7 @@ nl:
         form: "Deze btw-aangifte heeft niet het verwachte formulier."
         open: "Sluit eerst de btw-aangifte af in de Boekhouding."
       filing:
+        concurrent: "Naar TELEDEC verzonden (referentie %{reference}), maar de aangifte werd intussen opnieuw voorbereid: controleer op de website van TELEDEC."
         locked: "Deze aangifte is al %{status}: ze kan niet meer worden voorbereid."
         status: "Niet mogelijk: de aangifte is %{status}."
         changed: "De boekingen zijn gewijzigd sinds de voorbereiding: bereid de aangifte opnieuw voor."
@@ -97,6 +99,7 @@ nl:
         login: "Gebruikersnaam verplicht (hoogstens 255 tekens)."
         env: "Onbekende omgeving."
         api_key: "API-sleutel verplicht."
+        unreadable: "De opgeslagen API-sleutel is onleesbaar (sleutel van de instantie gewijzigd?): voer hem opnieuw in."
       outcome:
         status: "Onbekende uitkomst."
         reason: "Geef de reden van de weigering op."

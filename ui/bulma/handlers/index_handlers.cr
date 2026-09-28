@@ -12,7 +12,7 @@ module Teledec
         selected = pick(years)
         today = Time.utc(Time.local.year, Time.local.month, Time.local.day)
         deadlines = selected ? Api.schedule(actor, selected.id) : [] of Api::DeadlineView
-        filings = selected ? Api.filings(actor, selected.id) : [] of Api::FilingView
+        filings = selected ? Api.filings(actor, selected.id) : [] of Api::FilingSummaryView
         settings = Api.settings(actor)
         page("teledec/index.html", {
           "title"        => I18n.t("teledec_ui.title"),
@@ -20,7 +20,7 @@ module Teledec
           "years"        => years.map { |year| Ui.row({"id" => year.id.to_s, "label" => year.label, "selected" => year.id == selected.try(&.id) ? "1" : nil}) },
           "fiscal_year"  => selected.try { |year| Ui.row({"id" => year.id.to_s, "label" => year.label, "balance_url" => Ui.url("balance", fiscal_year_id: year.id)}) },
           "deadlines"    => listed(deadlines.map { |item| Present.deadline(item, fmt, today) }),
-          "filings"      => listed(filings.map { |item| Present.filing(item, fmt) }),
+          "filings"      => listed(filings.map { |item| Present.filing_summary(item, fmt) }),
           "transport"    => settings.transport,
           "tax_system"   => settings.tax_system.presence.try { |code| I18n.t("teledec.tax_systems.#{code}") },
           "vat_system"   => settings.vat_system.presence.try { |code| I18n.t("teledec.vat_systems.#{code}") },

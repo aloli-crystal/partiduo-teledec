@@ -58,7 +58,7 @@ describe "DAS2 (honoraires, depuis les fiches fournisseurs et les écritures)" d
     small = S.supplier("Conseil Petit")
     no_siret = S.supplier("Agence Sans Siret", siret: nil)
     S.fees(lawyer, "600", "2026-02-10")
-    S.fees(lawyer, "400", "2026-09-10")
+    S.fees(lawyer, "410", "2026-09-10")
     S.fees(small, "300")
     S.fees(no_siret, "2000", account: "6222")
     filing = S.prepare("das2", year: 2026)
@@ -66,8 +66,8 @@ describe "DAS2 (honoraires, depuis les fiches fournisseurs et les écritures)" d
     filing.due_on.should eq(Time.utc(2027, 5, 4))
     filing.das2.map(&.name).sort!.should eq(["Agence Sans Siret", "Cabinet Durand"])
     durand = filing.das2.find! { |line| line.name == "Cabinet Durand" }
-    durand.total.should eq(BigDecimal.new(1200)) # 1 000 HT + 20 % de TVA
-    durand.amounts.should eq({"fees" => BigDecimal.new(1200)})
+    durand.total.should eq(BigDecimal.new(1212)) # 1 010 HT + 20 % de TVA
+    durand.amounts.should eq({"fees" => BigDecimal.new(1212)})
     durand.siret.should eq(S::SIRET)
     durand.address.should eq("3 rue des Lilas, 69003 Lyon")
     agency = filing.das2.find! { |line| line.name == "Agence Sans Siret" }

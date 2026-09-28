@@ -29,11 +29,13 @@ D-TDC-001 à D-TDC-009.
   `is_rsi`, `is_rn`, `bic_rsi`, `bic_rn`, `bnc`, `sci`), régime de TVA
   (`VAT_SYSTEMS` : `ca3_monthly`, `ca3_quarterly`, `ca12`, `none`), option
   greffe, comptes (préfixe → nature, `DAS2_NATURES`) et seuil de la DAS2,
-  environnement, identifiant, `key_stored`, transport branché.
+  environnement, identifiant (`login`, rendu aux seuls titulaires de
+  `teledec.settings.manage`, vide sinon), `key_stored`, transport branché.
 * `update_settings(actor, SettingsInput)`.
 * `save_credentials(actor, CredentialsInput(login, api_key, env))` —
   chiffrés ; vérifiés par le transport s'il est branché ; clé vide : clé
-  enregistrée gardée. `clear_credentials(actor)`.
+  enregistrée gardée (`teledec.errors.credentials.unreadable` si elle ne se
+  déchiffre plus). `clear_credentials(actor)`.
 
 == Déclarations
 
@@ -60,17 +62,26 @@ D-TDC-001 à D-TDC-009.
   document a changé depuis la préparation.
 * `transmit(actor, id)` — refus : statut, document changé, contrôle
   bloquant, transport absent (`teledec.errors.transport.unavailable`),
-  identifiants absents, erreur du transport (notée dans l'historique).
-  Clé d'idempotence : `partiduo-<dépôt>-<rang>-<empreinte>`.
+  identifiants absents ou illisibles (`teledec.errors.credentials.missing`,
+  `.unreadable`), erreur du transport (notée dans l'historique), dépôt
+  préparé de nouveau pendant l'envoi (`teledec.errors.filing.concurrent`,
+  référence TELEDEC notée dans l'historique). Clé d'idempotence :
+  `partiduo-<dépôt>-<rang>-<empreinte>`. Toute transition prend le verrou
+  des dépôts et relit le dépôt (DECISIONS D-TDC-013).
 * `refresh(actor, id)`, `refresh_all(actor)` — accusé (pièce jointe du
-  socle) ou rejet (motif).
+  socle) ou rejet (motif) ; `refresh_all` isole chaque dépôt.
 * `record_outcome(actor, id, OutcomeInput)` — repli : transmis (référence),
-  accusé (fichier facultatif), rejeté (motif obligatoire).
-* `filings(actor, fiscal_year_id?)`, `filing(actor, id)`, `events(actor, id)`.
+  accusé (fichier facultatif), rejeté (motif obligatoire) ; une seule
+  transaction : une pièce refusée laisse le dépôt préparé.
+* `filings(actor, fiscal_year_id?) : Array(FilingSummaryView)` (en-tête,
+  statut, contrôles ; document non relu), `filing(actor, id) : FilingView`,
+  `events(actor, id)`.
 * `balance_file(actor, fiscal_year_id)`, `export_file(actor, id)`,
   `receipt_file(actor, id)`.
 
-`FilingView#ready?` : aucun contrôle bloquant (`ControlView#error?`).
+`das2` : `year` de 2000 à 2100 (`teledec.errors.year.invalid`).
+
+`FilingView#ready?`, `FilingSummaryView#ready?` : aucun contrôle bloquant (`ControlView#error?`).
 
 == Transport
 
@@ -99,6 +110,7 @@ empreinte SHA-256 du JSON.
 == Base
 
 Tables `teledec_settings` (ligne unique), `teledec_filing` (valeurs
-contrôlées, accusé en clé étrangère vers `core_attachment`, déclencheur
+contrôlées, clés étrangères vers `core_attachment` (accusé),
+`core_fiscal_year` et `auth_user` (auteurs, `ON DELETE SET NULL`), déclencheur
 `teledec_filing_guard` : document intangible une fois transmis, accusé
 définitif), `teledec_filing_event`.

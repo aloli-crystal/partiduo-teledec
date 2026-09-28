@@ -88,6 +88,11 @@ module Teledec
       Partiduo::Api::Core.fiscal_years(system).find { |year| year.ends_on == starts_on - 1.day }
     end
 
+    # En-tête du fichier d'import TELEDEC : format d'échange figé, en
+    # français, NON TRADUIT (exception documentée à la règle « aucune chaîne
+    # en dur », DECISIONS D-TDC-004).
+    CSV_HEADER = "Compte;Intitulé;Débit;Crédit;Solde débiteur;Solde créditeur"
+
     # Fichier de repli (ADR-007 D5) : balance au format d'import courant
     # (« Compte ; Intitulé ; Débit ; Crédit ; Solde débiteur ; Solde
     # créditeur »), séparateur `;`, virgule décimale, UTF-8 avec marque
@@ -95,7 +100,7 @@ module Teledec
     def self.csv(result : Result) : String
       String.build do |io|
         io << '﻿'
-        io << "Compte;Intitulé;Débit;Crédit;Solde débiteur;Solde créditeur\r\n"
+        io << CSV_HEADER << "\r\n"
         result.rows.each do |row|
           line = row.to_payload
           amounts = [line.debit, line.credit, line.balance_debit, line.balance_credit].map(&.tr(".", ","))

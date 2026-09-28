@@ -62,6 +62,7 @@ fr:
         unknown: "Exercice inconnu ou sans période."
       year:
         blank: "Indiquez l'année civile."
+        invalid: "Année civile invalide (de 2000 à 2100)."
       number:
         invalid: "Numéro d'acompte de 1 à 4."
       amount:
@@ -81,6 +82,7 @@ fr:
         form: "Cette déclaration de TVA n'est pas du formulaire attendu."
         open: "Clôturez d'abord la déclaration de TVA dans la Comptabilité."
       filing:
+        concurrent: "Envoyé à TELEDEC (référence %{reference}), mais le dépôt a été préparé de nouveau entre-temps : vérifiez sur le site de TELEDEC."
         locked: "Cette déclaration est déjà %{status} : elle ne se prépare plus."
         status: "Opération impossible : la déclaration est %{status}."
         changed: "Les écritures ont changé depuis la préparation : préparez de nouveau la déclaration."
@@ -97,6 +99,7 @@ fr:
         login: "Identifiant obligatoire (255 caractères au plus)."
         env: "Environnement inconnu."
         api_key: "Clé de l'API obligatoire."
+        unreadable: "La clé de l'API enregistrée est illisible (clé de l'instance changée ?) : saisissez-la de nouveau."
       outcome:
         status: "Issue inconnue."
         reason: "Indiquez le motif du rejet."

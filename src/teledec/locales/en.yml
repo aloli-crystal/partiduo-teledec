@@ -62,6 +62,7 @@ en:
         unknown: "Unknown financial year or year without periods."
       year:
         blank: "Enter the calendar year."
+        invalid: "Invalid calendar year (2000 to 2100)."
       number:
         invalid: "Instalment number from 1 to 4."
       amount:
@@ -81,6 +82,7 @@ en:
         form: "This VAT return is not of the expected form."
         open: "First close the VAT return in Accounting."
       filing:
+        concurrent: "Sent to TELEDEC (reference %{reference}), but the filing was prepared again in the meantime: check on the TELEDEC website."
         locked: "This return is already %{status}: it can no longer be prepared."
         status: "Not possible: the return is %{status}."
         changed: "Entries changed since preparation: prepare the return again."
@@ -97,6 +99,7 @@ en:
         login: "Login required (at most 255 characters)."
         env: "Unknown environment."
         api_key: "API key required."
+        unreadable: "The stored API key cannot be read (instance key changed?): enter it again."
       outcome:
         status: "Unknown outcome."
         reason: "Enter the rejection reason."

@@ -63,6 +63,10 @@ module Teledec
         filing.transmitted_at = nil
         filing.transmitted_by_id = nil
         filing.rejected_at = nil
+        # Pièce du rejet noté à la main : elle reste dans les pièces jointes
+        # du socle, mais n'est pas l'accusé du nouveau dépôt.
+        filing.receipt_attachment_id = nil
+        filing.acknowledged_at = nil
         filing.save!
         event(filing, "prepared", "", user_id)
         Partiduo::Api::Result(Filing).success(filing)
@@ -87,10 +91,17 @@ module Teledec
       Array(ControlView).from_json(filing.controls.to_s.presence || "[]")
     end
 
-    def self.credentials(settings : Settings) : Credentials?
+    # Identifiants de l'API : échec `credentials.missing` s'il n'y en a pas,
+    # `credentials.unreadable` si la clé enregistrée ne se déchiffre plus
+    # (clé de l'instance changée, valeur altérée).
+    def self.credentials(settings : Settings) : Partiduo::Api::Result(Credentials)
       key = settings.api_key.to_s
-      return if settings.login.to_s.empty? || key.empty?
-      Credentials.new(settings.login.to_s, Secrets.decrypt(key), settings.env.to_s)
+      if settings.login.to_s.empty? || key.empty?
+        return Partiduo::Api::Result(Credentials).failure(FieldError.base("teledec.errors.credentials.missing"))
+      end
+      Partiduo::Api::Result(Credentials).success(Credentials.new(settings.login.to_s, Secrets.decrypt(key), settings.env.to_s))
+    rescue Secrets::Error
+      Partiduo::Api::Result(Credentials).failure(FieldError.base("teledec.errors.credentials.unreadable"))
     end
 
     # --- Vues ------------------------------------------------------------------
@@ -136,6 +147,30 @@ module Teledec
         rejection_reason: filing.rejection_reason.to_s,
         last_error: filing.last_error.to_s,
         receipt_attachment_id: filing.receipt_attachment_id.try(&.to_i64),
+        prepared_at: filing.prepared_at!,
+        transmitted_at: filing.transmitted_at,
+        acknowledged_at: filing.acknowledged_at,
+        rejected_at: filing.rejected_at,
+      )
+    end
+
+    # En-tête d'un dépôt, sans relire le document (listes).
+    def self.summary(filing : Filing) : Api::FilingSummaryView
+      Api::FilingSummaryView.new(
+        id: filing.id!.to_i64,
+        key: filing.key.to_s,
+        kind: filing.kind.to_s,
+        forms: filing.forms.to_s.split(',').reject(&.empty?),
+        fiscal_year_id: filing.fiscal_year_id.try(&.to_i64),
+        year: filing.year!.to_i32,
+        number: filing.number!.to_i32,
+        period_from: filing.period_from!,
+        period_to: filing.period_to!,
+        due_on: filing.due_on,
+        status: filing.status.to_s,
+        controls: controls(filing),
+        remote_id: filing.remote_id.to_s,
+        manual: filing.manual || false,
         prepared_at: filing.prepared_at!,
         transmitted_at: filing.transmitted_at,
         acknowledged_at: filing.acknowledged_at,

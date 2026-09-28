@@ -27,6 +27,10 @@ module Teledec
       payload : Payload,
       controls : Array(ControlView)
 
+    # Années civiles admises pour la DAS2 (saisie bornée : `Time.utc`
+    # refuse les années hors de 1..9999).
+    YEARS = 2000..2100
+
     def self.system : Partiduo::Api::Actor
       Partiduo::Api::Actor.system
     end
@@ -52,7 +56,7 @@ module Teledec
         das2(input, company, settings)
       else
         fiscal_year = input.fiscal_year_id.try { |id| find_fiscal_year(id) }
-        return failure.call("fiscal_year_id", "teledec.errors.fiscal_year.unknown") if fiscal_year.nil? || fiscal_year.starts_on.nil?
+        return failure.call("fiscal_year_id", "teledec.errors.fiscal_year.unknown") if fiscal_year.nil? || fiscal_year.starts_on.nil? || fiscal_year.ends_on.nil?
         yearly(input, company, settings, fiscal_year)
       end
     end
@@ -192,6 +196,9 @@ module Teledec
 
     private def self.das2(input, company, settings) : Partiduo::Api::Result(Built)
       year = input.year || return Partiduo::Api::Result(Built).failure(FieldError.new("year", "teledec.errors.year.blank"))
+      unless YEARS.includes?(year)
+        return Partiduo::Api::Result(Built).failure(FieldError.new("year", "teledec.errors.year.invalid"))
+      end
       controls = identity_controls(company)
       result = Das2.compute(year, Filings.das2_accounts(settings), settings.das2_threshold || Config::DAS2_THRESHOLD)
       lines = result.beneficiaries.map do |item|

@@ -118,6 +118,23 @@ module Teledec
         })
       end
 
+      # Ligne de la liste des dépôts (vue résumée, sans le document).
+      def self.filing_summary(view : Api::FilingSummaryView, fmt : PartiduoUi::Format) : Row
+        Ui.row({
+          "id"           => view.id.to_s,
+          "label"        => I18n.t(view.kind_key),
+          "kind"         => view.kind,
+          "number"       => view.number > 0 ? view.number.to_s : nil,
+          "period"       => fmt.period(view.period_from, view.period_to),
+          "status"       => view.status,
+          "status_label" => I18n.t(view.status_key),
+          "status_class" => Ui.status_class(view.status),
+          "ready"        => view.ready? ? "1" : nil,
+          "blocking"     => I18n.t("teledec_ui.filings.blocking", count: view.errors.size),
+          "url"          => Ui.url("filing", id: view.id),
+        })
+      end
+
       def self.balance_row(row : Api::BalanceRowView, fmt : PartiduoUi::Format) : Row
         Ui.row({"account" => row.account, "label" => row.label, "debit" => fmt.amount(row.debit),
                 "credit" => fmt.amount(row.credit), "balance_debit" => row.balance_debit.zero? ? "" : fmt.amount(row.balance_debit),
