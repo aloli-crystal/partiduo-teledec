@@ -9,7 +9,7 @@ Contrat public de l'extension (`src/teledec/api/teledec.cr`, types dans
 `types.cr`), sur le modèle de `Partiduo::Api` : acteur en premier argument,
 contrôle d'accès en première ligne, vues immuables ; `ModuleDisabled` si
 l'extension est inactive. Décisions : `../partiduo-app/DECISIONS.adoc`,
-D-TDC-001 à D-TDC-022.
+D-TDC-001 à D-TDC-028.
 
 == Permissions
 
@@ -32,17 +32,21 @@ D-TDC-001 à D-TDC-022.
   environnement, identifiant (`login`, rendu aux seuls titulaires de
   `teledec.settings.manage`, vide sinon), `key_stored`, transport branché.
 * `update_settings(actor, SettingsInput)`.
-* `save_credentials(actor, CredentialsInput(login, api_key, env, email, siret))` —
+* `save_credentials(actor, CredentialsInput(login, api_key, env, email, siret, renew_callback_token))` —
   `login` et `api_key` : identifiant et secret du client OAuth2 de TELEDEC,
   chiffrés ; vérifiés par le transport s'il est branché (un jeton est
   demandé) ; secret vide : secret enregistré gardé
   (`teledec.errors.credentials.unreadable` s'il ne se déchiffre plus) ;
   `email` : compte TELEDEC de l'entreprise (vide : email de la société,
   `teledec.errors.credentials.email`) ; `siret` : 14 chiffres ou vide
-  (`teledec.errors.credentials.siret`). Crée le jeton des rappels s'il n'y
-  en a pas. `clear_credentials(actor)`.
+  (`teledec.errors.credentials.siret`), commençant par le SIREN de la
+  société (`teledec.errors.credentials.siret_siren`). Crée le jeton des
+  rappels s'il n'y en a pas, le renouvelle si `renew_callback_token`.
+  `clear_credentials(actor)`.
 * `SettingsView#email`, `#siret`, `#callback_path` (chemin des rappels,
-  jeton compris) : vides pour qui n'a pas `teledec.settings.manage`.
+  jeton compris), `#callback_url` (adresse complète en https sous
+  l'adresse publique de l'instance, vide si elle est inconnue) : vides
+  pour qui n'a pas `teledec.settings.manage`.
 
 == Déclarations
 
@@ -54,7 +58,7 @@ D-TDC-001 à D-TDC-022.
 |`greffe` |`fiscal_year_id`, `confidential` |balance, identité
 |`is_2571` |`fiscal_year_id`, `number` (1 à 4), `amount` |montant de l'acompte (euros)
 |`is_2572` |`fiscal_year_id`, `amount` (défaut : solde du 695) |impôt, acomptes transmis, solde
-|`vat_ca3`, `vat_ca12` |`vat_return_id` (déclaration close) |cases non nulles (euros)
+|`vat_ca3`, `vat_ca12` |`vat_return_id` (déclaration close) |cases non nulles arrondies à l'euro, totaux recalculés sur les cases arrondies (`VatTotals`)
 |`das2` |`year` |bénéficiaires au-delà du seuil, montants TTC par nature
 |===
 
@@ -67,8 +71,12 @@ D-TDC-001 à D-TDC-022.
   (`teledec.errors.filing.locked`).
 * `check(actor, id)` — recalcule : `teledec.controls.changed` si le
   document a changé depuis la préparation.
-* `transmit(actor, id, base_url = nil)` — `base_url` : adresse publique de
-  l'instance, pour l'adresse de rappel envoyée à TELEDEC (`auth.url`). Refus : statut, document changé, contrôle
+* `transmit(actor, id, base_url = nil)` — adresse de rappel envoyée à
+  TELEDEC (`auth.url`) : sous `base_url` si elle est donnée, sinon sous
+  l'adresse publique de l'instance (`Callbacks.instance_base_url` :
+  domaine de la société, `PARTIDUO_HOST`, premier de
+  `MARTEN_ALLOWED_HOSTS`), jamais tirée de la requête ; `https://`
+  seulement, sinon pas d'`auth.url` (suivi par `refresh`). Refus : statut, document changé, contrôle
   bloquant, transport absent (`teledec.errors.transport.unavailable`),
   identifiants absents ou illisibles (`teledec.errors.credentials.missing`,
   `.unreadable`), erreur du transport (notée dans l'historique), dépôt
@@ -78,15 +86,21 @@ D-TDC-001 à D-TDC-022.
   des dépôts et relit le dépôt (DECISIONS D-TDC-013).
 * `refresh(actor, id)`, `refresh_all(actor)` — état chez TELEDEC
   (`FilingView#remote_status`, `REMOTE_STATUSES`), accusé (pièce jointe du
-  socle) ou rejet (motif : erreurs de la DGFiP) ; `refresh_all` isole chaque
-  dépôt.
+  socle) ou rejet (motif : erreurs de la DGFiP) ; les comptes-rendus d'un
+  paiement ou d'un envoi précédent (autre référence) ne font pas foi ;
+  `refresh_all` isole chaque dépôt.
 * `callback(presented_token, body) : String` — rappel de TELEDEC, sans
   acteur, authentifié par le jeton des rappels ; rend `unauthorized`,
   `invalid`, `ignored` ou `ok` ; idempotent sur l'identifiant de la
-  déclaration ; `ModuleDisabled` si l'extension est inactive. Servi par
+  déclaration ; rattaché par la référence (par `declarationId` seulement
+  sans référence ; référence inconnue : `ignored`) ; rappels de paiement
+  ou d'un autre type de déclaration : `ignored` ; `formulairesStatus`,
+  s'il est donné, fait seul foi (`Sent` : en attente) ; `ModuleDisabled`
+  si l'extension est inactive. Servi par
   l'interface sur `CALLBACK_PATH` (`/hooks/TELEDEC/callback`, hors de
   `/ext/`, sans session ni jeton CSRF ; jeton en `Basic`, `Bearer` ou
-  paramètre `token`).
+  paramètre `token` ; 413 si `Content-Length` dépasse
+  `Callbacks::MAX_BYTES`).
 * `record_outcome(actor, id, OutcomeInput)` — repli : transmis (référence),
   accusé (fichier facultatif), rejeté (motif obligatoire) ; une seule
   transaction : une pièce refusée laisse le dépôt préparé.
@@ -112,7 +126,7 @@ abstract class Teledec::Transport
   abstract def name : String
   abstract def check(credentials : Credentials) : Nil                            # TransportError
   abstract def submit(credentials : Credentials, submission : Submission) : Submitted # remote_id, url, remote_status
-  abstract def status(credentials : Credentials, remote_id : String) : RemoteStatus  # pending, acknowledged, rejected
+  abstract def status(credentials : Credentials, remote_id : String, reference : String = "") : RemoteStatus  # pending, acknowledged, rejected
 end
 
 Teledec::Transports.current = … # Teledec::HttpTransport par défaut ; nil : repli
@@ -120,7 +134,7 @@ Teledec::Transports.current = … # Teledec::HttpTransport par défaut ; nil : r
 
 `TransportError#key` est une clé i18n (`teledec.errors.transport.*` :
 `credentials`, `refused`, `unreachable`, `source`, `account`, `email`,
-`siret`, `invalid`, `unsupported`). `Credentials#to_s` masque le secret.
+`siret`, `invalid`, `unsupported`, `das2_nature`). `Credentials#to_s` masque le secret.
 
 === Adaptateur réel `Teledec::HttpTransport`
 

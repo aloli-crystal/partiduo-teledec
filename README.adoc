@@ -99,8 +99,9 @@ transmission directe. Variable d'environnement facultative :
 liasse, communiqué par TELEDEC ; défaut `PARTIDUO`). Dans les paramètres de
 TELEDEC : identifiant et secret du client OAuth2, environnement (test :
 stage, ou production), email du compte TELEDEC de l'entreprise, SIRET de
-l'établissement ; l'adresse des rappels (jeton compris) y est affichée pour
-être confiée à TELEDEC.
+l'établissement ; l'adresse des rappels (jeton compris, en https sous le
+domaine de la société ou `PARTIDUO_HOST`) y est affichée pour être confiée à
+TELEDEC, et le jeton peut y être renouvelé.
 
 == Commandes
 

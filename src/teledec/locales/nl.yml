@@ -112,6 +112,7 @@ nl:
         invalid: "Onleesbaar antwoord van TELEDEC; probeer later opnieuw."
         unsupported: "TELEDEC biedt deze aangifte niet aan via zijn API: dien ze in op de website van TELEDEC."
         siret: "Vul de SIRET van de vestiging in bij de TELEDEC-instellingen: TELEDEC koppelt de aangifte eraan."
+        das2_nature: "Vergoedingssoort \"%{nature}\" heeft geen DAS2-letter: corrigeer de DAS2-rekeningen en bereid opnieuw voor."
       credentials:
         missing: "Sla eerst de API-gegevens van TELEDEC op."
         login: "Gebruikersnaam verplicht (hoogstens 255 tekens)."
@@ -120,6 +121,7 @@ nl:
         unreadable: "De opgeslagen API-sleutel is onleesbaar (sleutel van de instantie gewijzigd?): voer hem opnieuw in."
         email: "Ongeldig e-mailadres van de TELEDEC-account."
         siret: "Een SIRET van 14 cijfers wordt verwacht."
+        siret_siren: "Het SIRET moet beginnen met het SIREN van de onderneming (%{siren})."
       outcome:
         status: "Onbekende uitkomst."
         reason: "Geef de reden van de weigering op."
@@ -137,6 +139,7 @@ nl:
       das2_address: "Adres van begunstigde %{name} ontbreekt (leveranciersfiche)."
       das2_siret: "SIRET van begunstigde %{name} ontbreekt (leveranciersfiche)."
       das2_empty: "Geen begunstigde boven de drempel voor %{year}: geen DAS2 in te dienen."
+      das2_nature: "Vergoedingssoort \"%{nature}\" heeft geen DAS2-letter (DAS2-rekeningen corrigeren)."
       das2_orphan: "Boeking %{receipt} (%{amount}) zonder fiche van derde: niet opgenomen in de DAS2."
       box_unmapped: "Vak %{box} heeft geen equivalent in formulier %{form} van TELEDEC: dien het in op de website van TELEDEC."
       changed: "De boekingen zijn gewijzigd sinds de voorbereiding: bereid de aangifte opnieuw voor."

@@ -12,17 +12,23 @@ module Teledec
   #
   # Le rappel est authentifié par le jeton des rappels de l'instance
   # (aléatoire, chiffré dans les paramètres), présenté en mot de passe
-  # `Basic`, en `Bearer` ou en paramètre `token` ; il est rattaché au dépôt
-  # par la référence envoyée (sinon par l'identifiant de la déclaration),
-  # et idempotent : un rappel rejoué pour une déclaration déjà accusée ou
-  # rejetée ne change rien. Interne : appelé par `Api.callback`.
+  # `Basic` (à préférer : configuré chez TELEDEC), en `Bearer` ou en
+  # paramètre `token` (adresse `auth.url`, en https seulement) ; il est
+  # rattaché au dépôt par la référence envoyée (sinon, sans référence, par
+  # l'identifiant de la déclaration), les rappels de paiement sont
+  # ignorés, et il est idempotent : un rappel rejoué pour une déclaration
+  # déjà accusée ou rejetée ne change rien. Interne : appelé par
+  # `Api.callback`.
   module Callbacks
     alias Api = Teledec::Api
 
     # Route exposée par l'interface, hors de `/ext/` (pas de session).
     PATH = "/hooks/TELEDEC/callback"
 
-    # Taille maximale d'un rappel (accusé en base64 compris).
+    # Taille maximale d'un rappel (accusé en base64 compris). L'interface
+    # refuse en 413 un `Content-Length` plus grand avant de lire le corps ;
+    # Marten borne de toute façon la lecture (`request_max_body_size`,
+    # 2,5 Mo par défaut).
     MAX_BYTES = 8 * 1024 * 1024
 
     def self.new_token : String
@@ -47,11 +53,32 @@ module Teledec
       token(settings).try { |value| "#{PATH}?#{URI::Params.encode({"token" => value})}" }
     end
 
-    # Adresse complète des rappels pour l'instance servie à `base_url` ;
-    # `nil` sans adresse publique ni jeton.
-    def self.url(base_url : String?) : String?
+    # Adresse publique de l'instance (`https://<hôte>`), tirée de ses
+    # réglages et jamais de la requête (en-tête `Host`, schéma derrière un
+    # mandataire) : domaine de la société (`provision --domain`), sinon
+    # `PARTIDUO_HOST`, sinon le premier de `MARTEN_ALLOWED_HOSTS` ; `nil` si
+    # aucun n'est un nom d'hôte (DECISIONS D-TDC-027).
+    def self.instance_base_url : String?
+      domain = begin
+        Partiduo::Api::Core.settings(Partiduo::Api::Actor.system).domain
+      rescue Partiduo::Api::NotFound
+        ""
+      end
+      candidates = [domain, ENV["PARTIDUO_HOST"]?, ENV["MARTEN_ALLOWED_HOSTS"]?.try(&.split(',').first?)]
+      host = candidates.compact.map(&.strip.downcase).find(&.matches?(HOST)) || return
+      "https://#{host}"
+    end
+
+    # Nom d'hôte, port facultatif ; ni schéma, ni chemin, ni joker.
+    HOST = /\A[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:\d{1,5})?\z/
+
+    # Adresse complète des rappels, jeton compris, sous `base_url` (défaut :
+    # adresse publique de l'instance) ; `https://` seulement — le jeton ne
+    # circule jamais en clair —, sinon `nil` (suivi par `refresh`). `nil`
+    # aussi sans jeton.
+    def self.url(base_url : String? = instance_base_url) : String?
       base = base_url.try(&.rstrip('/')).presence || return
-      return unless base.starts_with?("https://") || base.starts_with?("http://")
+      return unless base.starts_with?("https://")
       path.try { |value| "#{base}#{value}" }
     end
 
@@ -76,8 +103,8 @@ module Teledec
       end
       outcome = Partiduo::Api::Transaction.run do
         Filings.lock!
-        filing = find(report)
-        next Partiduo::Api::Result(String).success("ignored") if filing.nil? || filing.manual
+        filing = concerned(report)
+        next Partiduo::Api::Result(String).success("ignored") if filing.nil?
         declaration_id = report.declaration_id[0, 64]
         final = filing.status == "acknowledged" || filing.status == "rejected"
         if final && (declaration_id.empty? || filing.declaration_id == declaration_id || filing.status == "acknowledged")
@@ -99,12 +126,22 @@ module Teledec
       outcome.success? ? outcome.value! : "invalid"
     end
 
-    # Dépôt visé : par la référence envoyée, sinon par l'identifiant de la
-    # déclaration.
+    # Dépôt que le rappel concerne : ni noté à la main, ni visé par un
+    # rappel de paiement ou d'un autre type de déclaration (il ne dit rien
+    # de l'accusé du dépôt, D-TDC-024).
+    private def self.concerned(report : Remote::Formats::Report) : Filing?
+      filing = find(report) || return
+      filing if !filing.manual && Remote::Formats.concerns?(report, filing.kind.to_s)
+    end
+
+    # Dépôt visé : par la référence envoyée ; par l'identifiant de la
+    # déclaration seulement si le rappel ne porte pas de référence. Une
+    # référence qui ne correspond à aucun dépôt est celle d'un envoi
+    # précédent (rejeté puis envoyé de nouveau) : le rappel est ignoré, il
+    # ne vaut pas pour l'envoi en cours (D-TDC-025).
     private def self.find(report : Remote::Formats::Report) : Filing?
       unless report.reference.empty?
-        found = Filing.filter(remote_reference: report.reference[0, 128]).first
-        return found if found
+        return Filing.filter(remote_reference: report.reference[0, 128]).first
       end
       return if report.declaration_id.empty?
       Filing.filter(declaration_id: report.declaration_id[0, 64]).first

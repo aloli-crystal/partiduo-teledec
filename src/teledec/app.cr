@@ -3,6 +3,7 @@
 require "./manifest"
 require "./config"
 require "./money"
+require "./vat_totals"
 require "./secrets"
 require "./transport"
 require "./payload"

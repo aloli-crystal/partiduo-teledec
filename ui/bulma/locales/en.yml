@@ -115,6 +115,9 @@ en:
       siret: "SIRET of the filing establishment"
       callback: "TELEDEC callback address"
       callback_help: "Give it to TELEDEC to receive acknowledgements without waiting; it contains a secret token."
+      renew_token: "Renew the callback token"
+      renew_token_help: "The old token stops working at once: give TELEDEC the new address (or Basic password)."
+      callback_no_host: "Public address of the instance unknown or not https (company domain, PARTIDUO_HOST): no TELEDEC callbacks, follow-up through \"Refresh\"."
     flash:
       prepared: "Return prepared."
       checked: "Return checked."

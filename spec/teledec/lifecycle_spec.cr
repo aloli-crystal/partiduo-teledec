@@ -17,7 +17,7 @@ end
 
 # TELEDEC qui accepte les dépôts mais ne répond plus sur leur état.
 private class UnreachableStatus < Teledec::SimulatedTeledec
-  def status(credentials : Teledec::Credentials, remote_id : String) : Teledec::RemoteStatus
+  def status(credentials : Teledec::Credentials, remote_id : String, reference : String = "") : Teledec::RemoteStatus
     raise Teledec::TransportError.new("teledec.errors.transport.unreachable")
   end
 end

@@ -9,11 +9,16 @@ module Teledec
     # rappels de l'instance, présenté en mot de passe `Basic`, en `Bearer`
     # ou en paramètre `token` (`Teledec::Api.callback`). Réponses : 200 (rappel
     # traité, ignoré ou rejoué), 400 (corps illisible), 401 (jeton absent
-    # ou faux), 404 (extension inactive), 405 (autre verbe).
+    # ou faux), 404 (extension inactive), 405 (autre verbe), 413
+    # (`Content-Length` au-delà de `Callbacks::MAX_BYTES`, corps non lu).
     class CallbackHandler < Marten::Handler
       protect_from_forgery false
 
       def post
+        # Corps annoncé trop gros : refusé avant d'être lu.
+        if (length = request.headers["Content-Length"]?.try(&.to_i64?)) && length > Callbacks::MAX_BYTES
+          return json({"status" => "too_large"}, 413)
+        end
         outcome = Api.callback(presented_token, request.body)
         case outcome
         when "unauthorized"

@@ -44,7 +44,8 @@ module Teledec
             "login"          => view.login.presence,
             "email"          => view.email.presence,
             "siret"          => view.siret.presence,
-            "callback_url"   => view.callback_path.presence.try { |path| "#{request.scheme}://#{request.host}#{path}" },
+            "callback_url"   => view.callback_url.presence,
+            "callback_path"  => view.callback_path.presence,
             "key_stored"     => view.key_stored ? "1" : nil,
             "checked_at"     => view.checked_at.try { |time| fmt.datetime(time) },
             "transport"      => view.transport,
@@ -77,7 +78,7 @@ module Teledec
 
       def post
         input = Api::CredentialsInput.new(login: field("login"), api_key: field("api_key"), env: field("env"),
-          email: field("email"), siret: field("siret"))
+          email: field("email"), siret: field("siret"), renew_callback_token: field("renew_callback_token") == "1")
         result = Api.save_credentials(current.actor, input)
         if result.success?
           flash["success"] = I18n.t("teledec_ui.flash.credentials")

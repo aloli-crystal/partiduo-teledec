@@ -69,8 +69,8 @@ module Teledec
     def submit(credentials : Credentials, submission : Submission) : Submitted
       payload = begin
         Payload.from_json(submission.payload)
-      rescue ex : JSON::ParseException | JSON::SerializableError
-        raise TransportError.new("teledec.errors.transport.invalid", message: "document illisible : #{ex.message}")
+      rescue JSON::ParseException | JSON::SerializableError
+        raise TransportError.new("teledec.errors.transport.invalid")
       end
       require_email!(credentials)
       key = Remote::Formats.key(payload, submission.due_on)
@@ -94,7 +94,7 @@ module Teledec
       end
     end
 
-    def status(credentials : Credentials, remote_id : String) : RemoteStatus
+    def status(credentials : Credentials, remote_id : String, reference : String = "") : RemoteStatus
       key = Remote::Formats::Key.parse(remote_id) || raise TransportError.new("teledec.errors.transport.invalid")
       require_email!(credentials)
       params = URI::Params.build do |form|
@@ -111,8 +111,13 @@ module Teledec
       state = Remote::Formats.state(raw)
       normalized = Remote::Formats.normalize(raw)
       return RemoteStatus.new("pending", remote_status: normalized) if state == "pending"
-      reports = (answer["compteRendus"]?.try(&.as_a?) || [] of JSON::Any).map { |item| Remote::Formats.report(item) }
-      reports = reports(credentials, key) if reports.empty?
+      listed = (answer["compteRendus"]?.try(&.as_a?) || [] of JSON::Any).map { |item| Remote::Formats.report(item) }
+      listed = reports(credentials, key) if listed.empty?
+      # Comptes-rendus de cette déclaration et de cet envoi : ni paiement,
+      # ni envoi précédent (autre référence, après un rejet puis un nouvel
+      # envoi : l'ancien ERREUR ne vaut pas pour le nouveau).
+      reports = listed.reject { |item| item.payment? || item.stale?(reference) }
+      return RemoteStatus.new("pending") if reports.empty? && !listed.empty?
       report = Remote::Formats.latest(reports)
       reason = report.try(&.reason).presence || answer["message"]?.try(&.as_s?).to_s
       receipt = report.try(&.pdf).try do |pdf|
@@ -143,6 +148,9 @@ module Teledec
     # Crée ou met à jour l'entreprise chez TELEDEC et la rattache au compte
     # `credentials.email` (`POST /service/creation-entreprise`) ;
     # `password_hash` : empreinte bcrypt (coût 12) du mot de passe du compte.
+    # Outil d'intégration : l'application ne l'appelle pas (le compte de
+    # l'entreprise est créé chez TELEDEC, B-TDC-004) ; la suite du stage
+    # s'en sert pour préparer son compte de test.
     def create_company(credentials : Credentials, identity : Hash(String, String | Int32), password_hash : String) : String
       require_email!(credentials)
       body = {"auth" => {"email" => credentials.email, "password" => password_hash}, "identity" => identity}.to_json
@@ -174,7 +182,7 @@ module Teledec
       when 401, 403
         TransportError.new("teledec.errors.transport.credentials")
       else
-        if message.includes?("source")
+        if source_refused?(message)
           TransportError.new("teledec.errors.transport.source", {"reason" => short(message)})
         elsif message.downcase.includes?("utilisateur non trouv")
           TransportError.new("teledec.errors.transport.account", {"reason" => short(message)})
@@ -184,6 +192,15 @@ module Teledec
           TransportError.new("teledec.errors.transport.refused", {"reason" => short(message)})
         end
       end
+    end
+
+    # Refus de la source de la liasse (`#SOURCE`), tel que TELEDEC le
+    # formule (erreur 101 : « il manque la source ou la source n'est pas un
+    # partenaire reconnu ») : « la source » ou « source non reconnue », en
+    # mots entiers. Ni la sous-chaîne « source » (« Ressource
+    # introuvable »), ni toute erreur 101 (email invalide, par exemple).
+    private def source_refused?(message : String) : Bool
+      message.downcase.matches?(/\bla source\b|\bsource (non|pas) reconnue\b/)
     end
 
     private def message_of(body : String) : String
@@ -259,11 +276,11 @@ module Teledec
     private def parse(body : String) : JSON::Any
       JSON.parse(body)
     rescue JSON::ParseException
-      raise TransportError.new("teledec.errors.transport.invalid", message: "réponse illisible de TELEDEC")
+      raise TransportError.new("teledec.errors.transport.invalid")
     end
 
     private def parse_object(body : String) : Hash(String, JSON::Any)
-      parse(body).as_h? || raise TransportError.new("teledec.errors.transport.invalid", message: "réponse inattendue de TELEDEC")
+      parse(body).as_h? || raise TransportError.new("teledec.errors.transport.invalid")
     end
 
     private def short(text : String) : String

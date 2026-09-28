@@ -59,14 +59,7 @@ module Teledec
       end
 
       def post
-        after(Api.transmit(current.actor, id_param, base_url), id_param, "teledec_ui.flash.transmitted")
-      end
-
-      # Adresse publique de l'instance, pour les rappels de TELEDEC.
-      private def base_url : String
-        port = request.port.presence
-        default = port.nil? || (request.scheme == "https" && port == "443") || (request.scheme == "http" && port == "80")
-        "#{request.scheme}://#{request.host}#{default ? "" : ":#{port}"}"
+        after(Api.transmit(current.actor, id_param), id_param, "teledec_ui.flash.transmitted")
       end
     end
 

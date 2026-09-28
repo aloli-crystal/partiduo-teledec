@@ -35,9 +35,11 @@ module Teledec
     # Identifiants de l'API partenaire : identifiant et secret du client
     # OAuth2 (`login`, `api_key` ; vide garde le secret enregistré),
     # environnement, email du compte TELEDEC de l'entreprise (vide : celui
-    # de la société) et SIRET de l'établissement déclarant (facultatif).
+    # de la société) et SIRET de l'établissement déclarant (facultatif,
+    # commence par le SIREN de la société) ; `renew_callback_token` :
+    # renouvelle le jeton des rappels.
     record CredentialsInput, login : String, api_key : String, env : String = "sandbox", email : String = "",
-      siret : String = ""
+      siret : String = "", renew_callback_token : Bool = false
 
     # Issue d'un dépôt fait hors de Partiduo (repli, sur le site de
     # TELEDEC) : `transmitted`, `acknowledged` (accusé facultatif en pièce
@@ -207,8 +209,10 @@ module Teledec
       end
     end
 
-    # Paramètres ; `login`, `email`, `siret` et `callback_path` (chemin des
-    # rappels de TELEDEC, jeton compris) sont vides pour qui n'a pas
+    # Paramètres ; `login`, `email`, `siret`, `callback_path` (chemin des
+    # rappels de TELEDEC, jeton compris) et `callback_url` (adresse complète
+    # des rappels sous l'adresse publique de l'instance, en https ; vide si
+    # l'hôte de l'instance est inconnu) sont vides pour qui n'a pas
     # `teledec.settings.manage`.
     record SettingsView,
       tax_system : String,
@@ -221,6 +225,7 @@ module Teledec
       email : String,
       siret : String,
       callback_path : String,
+      callback_url : String,
       key_stored : Bool,
       checked_at : Time?,
       transport : String?,

@@ -42,10 +42,11 @@
         {% if errors.email %}<p class="help is-danger">{{ errors.email }}</p>{% endif %}</div>
       <div class="field"><label class="label" for="pd-teledec-siret">{% translate "teledec_ui.settings.siret" %}</label><input class="input pd-mono" type="text" inputmode="numeric" id="pd-teledec-siret" name="siret" value="{{ settings.siret }}"{% if errors.siret %} aria-invalid="true"{% endif %}>
         {% if errors.siret %}<p class="help is-danger">{{ errors.siret }}</p>{% endif %}</div>
+      {% if settings.callback_path %}<div class="field"><label class="checkbox"><input type="checkbox" name="renew_callback_token" value="1" data-teledec-renew-token> {% translate "teledec_ui.settings.renew_token" %}</label><p class="help">{% translate "teledec_ui.settings.renew_token_help" %}</p></div>{% endif %}
       <div class="field"><label class="label" for="pd-teledec-env">{% translate "teledec_ui.settings.env" %}</label><div class="select"><select id="pd-teledec-env" name="env">{% for option in environments %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div></div>
       <button class="button is-primary pd-touch" type="submit">{% translate "ui.forms.save" %}</button>
     </form>
-    {% if settings.callback_url %}<div class="field mt-3" data-teledec-callback><label class="label" for="pd-teledec-callback">{% translate "teledec_ui.settings.callback" %}</label><input class="input pd-mono is-size-7" type="text" id="pd-teledec-callback" value="{{ settings.callback_url }}" readonly><p class="help">{% translate "teledec_ui.settings.callback_help" %}</p></div>{% endif %}
+    {% if settings.callback_url %}<div class="field mt-3" data-teledec-callback><label class="label" for="pd-teledec-callback">{% translate "teledec_ui.settings.callback" %}</label><input class="input pd-mono is-size-7" type="text" id="pd-teledec-callback" value="{{ settings.callback_url }}" readonly><p class="help">{% translate "teledec_ui.settings.callback_help" %}</p></div>{% elsif settings.callback_path %}<p class="help mt-3" data-teledec-callback-no-host>{% translate "teledec_ui.settings.callback_no_host" %}</p>{% endif %}
     {% if settings.key_stored %}<form method="post" action="{% url 'teledec:clear_credentials' %}" class="mt-3">{% csrf_input %}<button class="button is-danger is-light pd-touch" type="submit">{% translate "teledec_ui.settings.clear" %}</button></form>{% endif %}
   </div>
 </section>

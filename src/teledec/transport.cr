@@ -74,8 +74,10 @@ module Teledec
     # la période déclarée.
     abstract def submit(credentials : Credentials, submission : Submission) : Submitted
 
-    # État d'un dépôt.
-    abstract def status(credentials : Credentials, remote_id : String) : RemoteStatus
+    # État d'un dépôt. `reference` : référence de l'envoi en cours
+    # (`Submission#reference`) ; un compte-rendu d'un envoi précédent (autre
+    # référence) ne fait pas foi.
+    abstract def status(credentials : Credentials, remote_id : String, reference : String = "") : RemoteStatus
   end
 
   # Transport actif de l'instance : l'adaptateur de l'API partenaire de

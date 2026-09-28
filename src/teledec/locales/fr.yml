@@ -112,6 +112,7 @@ fr:
         invalid: "Réponse de TELEDEC illisible ; réessayez plus tard."
         unsupported: "TELEDEC ne propose pas cette déclaration par son API : déposez-la sur le site de TELEDEC."
         siret: "Indiquez le SIRET de l'établissement dans les paramètres de TELEDEC : TELEDEC y rattache la liasse."
+        das2_nature: "Nature de rémunération « %{nature} » sans lettre de la DAS2 : corrigez les comptes de la DAS2 et préparez de nouveau."
       credentials:
         missing: "Enregistrez d'abord les identifiants de l'API TELEDEC."
         login: "Identifiant obligatoire (255 caractères au plus)."
@@ -120,6 +121,7 @@ fr:
         unreadable: "La clé de l'API enregistrée est illisible (clé de l'instance changée ?) : saisissez-la de nouveau."
         email: "Email du compte TELEDEC invalide."
         siret: "SIRET à 14 chiffres attendu."
+        siret_siren: "Le SIRET doit commencer par le SIREN de la société (%{siren})."
       outcome:
         status: "Issue inconnue."
         reason: "Indiquez le motif du rejet."
@@ -137,6 +139,7 @@ fr:
       das2_address: "Adresse du bénéficiaire %{name} manquante (fiche fournisseur)."
       das2_siret: "SIRET du bénéficiaire %{name} manquant (fiche fournisseur)."
       das2_empty: "Aucun bénéficiaire au-delà du seuil pour %{year} : pas de DAS2 à déposer."
+      das2_nature: "Nature de rémunération « %{nature} » sans lettre de la DAS2 (comptes de la DAS2 à corriger)."
       das2_orphan: "Écriture %{receipt} (%{amount}) sans fiche de tiers : non reprise dans la DAS2."
       box_unmapped: "La case %{box} n'a pas d'équivalent dans le formulaire %{form} de TELEDEC : déclarez-la sur le site de TELEDEC."
       changed: "Les écritures ont changé depuis la préparation : préparez de nouveau la déclaration."

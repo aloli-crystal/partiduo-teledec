@@ -182,7 +182,9 @@ module Teledec
         controls << warning("teledec.controls.vat_system", {"system" => settings.vat_system.to_s})
       end
       forms = Config.forms(input.kind, "")
-      boxes = view.boxes.reject(&.amount.zero?).to_h { |box| {box.code, Money.euros_text(box.amount)} }
+      # Cases arrondies à l'euro, totaux recalculés sur les cases arrondies
+      # (`VatTotals`, D-TDC-026).
+      boxes = VatTotals.coherent(input.kind, view.boxes.to_h { |box| {box.code, box.amount.to_s} })
       # Cases qu'aucun code du formulaire de TELEDEC ne reçoit : la
       # déclaration serait incomplète.
       Remote::Formats.unmapped(input.kind, boxes, view.date_to.year).each do |box|
@@ -221,6 +223,11 @@ module Teledec
           item.amounts.transform_values { |value| Money.euros_text(value) }, Money.euros_text(item.total))
       end
       controls << error("teledec.controls.das2_empty", {"year" => year.to_s}) if lines.empty?
+      # Nature sans lettre de la DGFiP : la rémunération irait dans une
+      # mauvaise case.
+      lines.flat_map(&.amounts.keys).uniq!.reject { |nature| Remote::Formats::DAS2_LETTERS.has_key?(nature) }.each do |nature|
+        controls << error("teledec.controls.das2_nature", {"nature" => nature})
+      end
       result.orphans.each do |orphan|
         controls << warning("teledec.controls.das2_orphan", {"receipt" => orphan.receipt, "amount" => Money.cents(orphan.amount)})
       end

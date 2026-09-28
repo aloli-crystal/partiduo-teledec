@@ -112,6 +112,7 @@ en:
         invalid: "Unreadable answer from TELEDEC; try again later."
         unsupported: "TELEDEC does not offer this return through its API: file it on the TELEDEC website."
         siret: "Enter the SIRET of the establishment in the TELEDEC settings: TELEDEC attaches the tax return to it."
+        das2_nature: "Remuneration type \"%{nature}\" has no DAS2 letter: fix the DAS2 accounts and prepare again."
       credentials:
         missing: "First save the TELEDEC API credentials."
         login: "Login required (at most 255 characters)."
@@ -120,6 +121,7 @@ en:
         unreadable: "The stored API key cannot be read (instance key changed?): enter it again."
         email: "Invalid TELEDEC account email."
         siret: "A 14-digit SIRET is expected."
+        siret_siren: "The SIRET must start with the company SIREN (%{siren})."
       outcome:
         status: "Unknown outcome."
         reason: "Enter the rejection reason."
@@ -137,6 +139,7 @@ en:
       das2_address: "No address for beneficiary %{name} (supplier card)."
       das2_siret: "No SIRET for beneficiary %{name} (supplier card)."
       das2_empty: "No beneficiary above the threshold for %{year}: no DAS2 to file."
+      das2_nature: "Remuneration type \"%{nature}\" has no DAS2 letter (fix the DAS2 accounts)."
       das2_orphan: "Entry %{receipt} (%{amount}) without third-party card: not included in the DAS2."
       box_unmapped: "Box %{box} has no equivalent in TELEDEC form %{form}: file it on the TELEDEC website."
       changed: "Entries changed since preparation: prepare the return again."

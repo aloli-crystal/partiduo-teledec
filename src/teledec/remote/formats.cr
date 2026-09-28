@@ -249,7 +249,9 @@ module Teledec
       # Bloc d'une déclaration de TVA : cases traduites (euros entiers),
       # mention « néant » si tout est nul ; rend aussi le montant à payer.
       private def self.vat_block(payload : Payload, form : String) : {Int64, Hash(String, JSON::Any)}
-        boxes = payload.boxes.try(&.values.first?) || {} of String => String
+        # Totaux recalculés sur les cases arrondies (déjà fait à la
+        # préparation ; sans effet sur un document cohérent).
+        boxes = VatTotals.coherent(payload.kind, payload.boxes.try(&.values.first?) || {} of String => String)
         table = codes(form, millesime(payload))
         block = {} of String => JSON::Any
         boxes.each do |box, amount|
@@ -291,7 +293,10 @@ module Teledec
       end
 
       # DAS2 : établissement déclarant, une répétition par bénéficiaire et
-      # par nature (lettre de la DGFiP), totaux par nature.
+      # par nature (lettre de la DGFiP, SIRET de l'établissement en `AD`),
+      # totaux par nature. Le bénéficiaire est déclaré en raison sociale
+      # (`AF_3036_1`) : les fiches fournisseurs ne distinguent pas la
+      # personne physique (`AE_3036_*`, BLOCAGES B-TDC-004).
       private def self.das2_block(payload : Payload, credentials : Credentials) : Hash(String, JSON::Any)
         identity = payload.identity
         lines = payload.das2 || [] of Payload::Das2Line
@@ -300,16 +305,21 @@ module Teledec
         block["AA_3042_1"] = JSON::Any.new(identity.street) unless identity.street.empty?
         block["AA_3251_1"] = JSON::Any.new(identity.postcode) unless identity.postcode.empty?
         block["AA_3164_1"] = JSON::Any.new(identity.city) unless identity.city.empty?
-        siret(credentials, identity).try { |value| block["AE"] = JSON::Any.new(value) }
+        establishment = siret(credentials, identity)
+        establishment.try { |number| block["AE"] = JSON::Any.new(number) }
         beneficiaries = [] of JSON::Any
         totals = Hash(String, Int64).new(0_i64)
         lines.each do |line|
           line.amounts.each do |nature, amount|
             value = integer(amount)
             next if value.zero?
-            letter = DAS2_LETTERS[nature]? || "V"
+            # Nature sans lettre : refusée plutôt que déclarée en « autres »
+            # (contrôle bloquant à la préparation, `das2_nature`).
+            letter = DAS2_LETTERS[nature]? ||
+                     raise TransportError.new("teledec.errors.transport.das2_nature", {"nature" => nature})
             totals[letter] += value
             item = {} of String => JSON::Any
+            establishment.try { |number| item["AD"] = JSON::Any.new(number) }
             item["AF_3039_1"] = JSON::Any.new(line.siret) unless line.siret.empty?
             item["AF_3036_1"] = JSON::Any.new(line.name)
             item["AG_3042_1"] = JSON::Any.new(line.address) unless line.address.empty?
@@ -353,11 +363,39 @@ module Teledec
 
       # Compte-rendu de la DGFiP (callback, `compteRendus` du suivi, liste
       # des comptes-rendus) : statut, motif, accusé en PDF.
+      #
+      # `declaration_type` : type du rappel chez TELEDEC (`TVA`, `Liasse`,
+      # `Paiement`…) ; un rappel de paiement ne dit rien de la déclaration.
       record Report, declaration_id : String, reference : String, status : String, reason : String,
-        pdf : Bytes?, at : Time?, form : String do
+        pdf : Bytes?, at : Time?, form : String, declaration_type : String = "" do
         def state : String
           Formats.state(status)
         end
+
+        # Compte-rendu d'un paiement (prélèvement), pas de la déclaration.
+        def payment? : Bool
+          Formats.normalize(declaration_type) == "paiement"
+        end
+
+        # Compte-rendu d'un autre envoi que celui dont la référence est
+        # `expected` : référence renseignée et différente.
+        def stale?(expected : String) : Bool
+          !reference.empty? && !expected.empty? && reference != expected
+        end
+      end
+
+      # Type de rappel attendu pour une sorte de dépôt (`declarationType`),
+      # `nil` quand la documentation ne le dit pas (DAS2, IS, greffe) : seul
+      # un rappel de paiement est alors écarté.
+      DECLARATION_TYPES = {"vat_ca3" => "tva", "vat_ca12" => "tva", "liasse" => "liasse"}
+
+      # Le compte-rendu `report` concerne-t-il la déclaration d'un dépôt de
+      # sorte `kind` ? Non pour un paiement, ni pour un type connu différent.
+      def self.concerns?(report : Report, kind : String) : Bool
+        return false if report.payment?
+        type = normalize(report.declaration_type)
+        expected = DECLARATION_TYPES[kind]?
+        type.empty? || expected.nil? || type == expected
       end
 
       def self.report(any : JSON::Any) : Report
@@ -366,15 +404,19 @@ module Teledec
           value = hash[name]?
           value.nil? || value.raw.nil? ? "" : (value.as_s? || value.raw.to_s)
         end
-        status = [text.call("formulairesStatus"), text.call("status"), text.call("declarationStatus")]
-          .find { |value| state(value) != "pending" } || text.call("status").presence || text.call("declarationStatus")
+        # Le statut des formulaires, s'il est donné, fait seul foi : `Sent`
+        # (parti à la DGFiP, pas encore accepté) reste en attente même si
+        # l'étape du rappel (`status`) vaut `OK`.
+        status = text.call("formulairesStatus").presence ||
+                 [text.call("status"), text.call("declarationStatus")].find { |value| state(value) != "pending" } ||
+                 text.call("status").presence || text.call("declarationStatus")
         pdf = text.call("pdf").presence.try do |encoded|
           Base64.decode(encoded)
         rescue Base64::Error
           nil
         end
         Report.new(text.call("declarationId"), text.call("reference"), status, reason(hash, text.call("statusLibelle")),
-          pdf, parse_time(text.call("dateHeureDGFiP")), text.call("formulaire"))
+          pdf, parse_time(text.call("dateHeureDGFiP")), text.call("formulaire"), text.call("declarationType"))
       end
 
       # Motif lisible d'un rejet : erreurs de la DGFiP

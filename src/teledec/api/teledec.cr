@@ -106,7 +106,7 @@ module Teledec
         errors << FieldError.new("email", "teledec.errors.credentials.email")
       end
       siret = input.siret.delete(' ')
-      errors << FieldError.new("siret", "teledec.errors.credentials.siret") unless siret.empty? || siret.matches?(/\A\d{14}\z/)
+      siret_error(siret).try { |error| errors << error }
       return Result(SettingsView).failure(errors) unless errors.empty?
 
       credentials = Credentials.new(login, key, input.env, Filings.account_email(email), siret)
@@ -125,7 +125,11 @@ module Teledec
         settings.env = input.env
         settings.email = email
         settings.siret = siret
-        settings.callback_token = Secrets.encrypt(Callbacks.new_token) if settings.callback_token.to_s.empty?
+        # Jeton des rappels : créé une fois, renouvelé à la demande (l'ancien
+        # cesse aussitôt de valoir : adresse à redonner à TELEDEC).
+        if settings.callback_token.to_s.empty? || input.renew_callback_token
+          settings.callback_token = Secrets.encrypt(Callbacks.new_token)
+        end
         settings.checked_at = checked
         settings.updated_by_id = actor.user_id
         settings.save!
@@ -218,9 +222,11 @@ module Teledec
     # son empreinte (une préparation concurrente l'emporte : le conflit est
     # noté dans l'historique avec la référence de TELEDEC).
     #
-    # `base_url` (`https://dossier.exemple.fr`) : adresse publique de
-    # l'instance, pour que TELEDEC y rappelle (`Callbacks::PATH`) ; sans
-    # elle, le suivi se fait par `refresh`.
+    # Adresse des rappels donnée à TELEDEC (`auth.url`) : sous `base_url`
+    # (`https://dossier.exemple.fr`) si elle est donnée, sinon sous
+    # l'adresse publique de l'instance (`Callbacks.instance_base_url`,
+    # tirée de ses réglages, jamais de la requête) ; `https://` seulement.
+    # Sans elle, le suivi se fait par `refresh`.
     def self.transmit(actor : Actor, id : Int64, base_url : String? = nil) : Result(FilingView)
       Guard.authorize!(actor, TRANSMIT, module_code: MODULE_CODE)
       filing = find(id)
@@ -247,7 +253,7 @@ module Teledec
       year_end = filing.fiscal_year_id.try { |year_id| Builder.find_fiscal_year(year_id.to_i64) }.try(&.ends_on)
       submission = Submission.new("partiduo-#{filing.id}-#{attempt}-#{fingerprint[0, 16]}", filing.kind.to_s,
         filing.forms.to_s.split(','), filing.payload.to_s, fingerprint, due_on: filing.due_on.try { |day| Builder.day(day) },
-        year_end: year_end.try { |day| Builder.day(day) }, callback_url: Callbacks.url(base_url))
+        year_end: year_end.try { |day| Builder.day(day) }, callback_url: Callbacks.url(base_url || Callbacks.instance_base_url))
       submitted = begin
         transport.submit(credentials, submission)
       rescue ex : TransportError
@@ -297,7 +303,7 @@ module Teledec
       return Result(FilingView).failure(found.errors) if found.failure?
       remote_id = filing.remote_id.to_s
       remote = begin
-        transport.status(found.value!, remote_id)
+        transport.status(found.value!, remote_id, filing.remote_reference.to_s)
       rescue ex : TransportError
         note_error(id, ex.key, actor, event: false)
         return Result(FilingView).failure(FieldError.base(ex.key, ex.params))
@@ -460,6 +466,16 @@ module Teledec
         vat_return_id: filing.vat_return_id.try(&.to_i64), amount: amount, confidential: details["confidential"]? == "1")
     end
 
+    # SIRET des paramètres : vide, ou 14 chiffres commençant par le SIREN de
+    # la société (SIRET d'un de ses établissements).
+    private def self.siret_error(siret : String) : FieldError?
+      return if siret.empty?
+      return FieldError.new("siret", "teledec.errors.credentials.siret") unless siret.matches?(/\A\d{14}\z/)
+      siren = Partiduo::Api::Core.settings(Actor.system).siren.delete(' ')
+      return if siren.empty? || siret.starts_with?(siren)
+      FieldError.new("siret", "teledec.errors.credentials.siret_siren", {"siren" => siren})
+    end
+
     private def self.status_failure(filing : Filing) : Result(FilingView)
       Result(FilingView).failure(FieldError.base("teledec.errors.filing.status",
         {"status" => I18n.t("teledec.statuses.#{filing.status}")}))
@@ -498,6 +514,7 @@ module Teledec
         email: manager ? settings.email.to_s : "",
         siret: manager ? settings.siret.to_s : "",
         callback_path: manager ? Callbacks.path(settings).to_s : "",
+        callback_url: manager ? Callbacks.url.to_s : "",
         key_stored: !settings.api_key.to_s.empty?,
         checked_at: settings.checked_at,
         transport: Transports.current.try(&.name),

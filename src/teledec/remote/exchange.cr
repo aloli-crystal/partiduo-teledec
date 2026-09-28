@@ -36,14 +36,17 @@ module Teledec
     end
 
     # Échange réel, par `HTTP::Client` : délais bornés (connexion 10 s,
-    # lecture 60 s) ; une panne réseau devient
-    # `teledec.errors.transport.unreachable`. Rien n'est journalisé (les
-    # en-têtes portent le jeton ou les identifiants). Pas de mandataire
-    # sortant (`HTTPS_PROXY`) : l'instance joint TELEDEC directement
-    # (BLOCAGES B-TDC-004).
+    # lecture 60 s), réponse bornée à `MAX_BYTES` (au-delà :
+    # `teledec.errors.transport.invalid`, sans tout lire) ; une panne réseau
+    # devient `teledec.errors.transport.unreachable`. Rien n'est journalisé
+    # (les en-têtes portent le jeton ou les identifiants). Pas de
+    # mandataire sortant (`HTTPS_PROXY`) : l'instance joint TELEDEC
+    # directement (BLOCAGES B-TDC-004).
     class Net < Exchange
       CONNECT_TIMEOUT = 10.seconds
       READ_TIMEOUT    = 60.seconds
+      # Taille maximale d'une réponse de TELEDEC (accusé en base64 compris).
+      MAX_BYTES = 16 * 1024 * 1024
 
       def call(request : Request) : Response
         uri = request.uri
@@ -51,14 +54,25 @@ module Teledec
         client.connect_timeout = CONNECT_TIMEOUT
         client.read_timeout = READ_TIMEOUT
         begin
-          response = client.exec(request.method, uri.request_target, headers: request.headers,
-            body: request.body.empty? ? nil : request.body)
-          Response.new(response.status_code, response.body, response.content_type.to_s)
+          client.exec(request.method, uri.request_target, headers: request.headers,
+            body: request.body.empty? ? nil : request.body) do |response|
+            Response.new(response.status_code, Net.read_limited(response.body_io?), response.content_type.to_s)
+          end
         ensure
           client.close
         end
-      rescue ex : IO::Error | Socket::Error | OpenSSL::Error
-        raise TransportError.new("teledec.errors.transport.unreachable", message: "TELEDEC injoignable : #{ex.class}")
+      rescue IO::Error | Socket::Error | OpenSSL::Error
+        raise TransportError.new("teledec.errors.transport.unreachable")
+      end
+
+      # Corps lu jusqu'à `max` octets ; au-delà, `TransportError`
+      # (`teledec.errors.transport.invalid`).
+      def self.read_limited(io : IO?, max : Int32 = MAX_BYTES) : String
+        return "" unless io
+        buffer = IO::Memory.new
+        copied = IO.copy(io, buffer, max)
+        raise TransportError.new("teledec.errors.transport.invalid") if copied == max && io.read_byte
+        buffer.to_s
       end
     end
   end

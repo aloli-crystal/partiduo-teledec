@@ -41,7 +41,7 @@ module VerifT
   # TELEDEC simulé qui accuse réception de chaque dépôt à la première
   # relève de son état, comme la DGFiP le fait après quelques minutes.
   class AutoAckTeledec < Teledec::SimulatedTeledec
-    def status(credentials : Teledec::Credentials, remote_id : String) : Teledec::RemoteStatus
+    def status(credentials : Teledec::Credentials, remote_id : String, reference : String = "") : Teledec::RemoteStatus
       deposit = deposits[remote_id]?
       acknowledge(remote_id) if deposit && deposit.report.nil?
       super
