@@ -1,0 +1,118 @@
+nl:
+  teledec:
+    module:
+      name: "TELEDEC (elektronische belastingaangiften)"
+    permissions:
+      return:
+        read: "Elektronische aangiften, termijnen en ontvangstbewijzen bekijken"
+        prepare: "Elektronische aangiften voorbereiden en controleren"
+        transmit: "Elektronische aangiften naar TELEDEC verzenden"
+      settings:
+        manage: "TELEDEC instellen (belastingstelsel, opties, API-gegevens)"
+    menu:
+      returns: "Elektronische aangiften"
+      settings: "TELEDEC"
+    transport: "TELEDEC"
+    kinds:
+      liasse: "Fiscale aangiftebundel"
+      vat_ca3: "Btw-aangifte CA3"
+      vat_ca12: "Btw-aangifte CA12"
+      das2: "DAS2 (honoraria)"
+      is_2571: "Voorschot vennootschapsbelasting (2571)"
+      is_2572: "Saldo vennootschapsbelasting (2572)"
+      greffe: "Neerlegging van de jaarrekening bij de griffie"
+    statuses:
+      prepared: "Voorbereid"
+      transmitted: "Verzonden"
+      acknowledged: "Ontvangstbewijs"
+      rejected: "Geweigerd"
+      error: "Fout"
+    tax_systems:
+      is_rsi: "Vennootschapsbelasting, vereenvoudigd (2065 en 2033)"
+      is_rn: "Vennootschapsbelasting, normaal (2065 en 2050)"
+      bic_rsi: "BIC in de inkomstenbelasting, vereenvoudigd (2031 en 2033)"
+      bic_rn: "BIC in de inkomstenbelasting, normaal (2031 en 2050)"
+      bnc: "BNC, gecontroleerde aangifte (2035)"
+      sci: "Vastgoedvennootschap, inkomstenbelasting (2072)"
+    vat_systems:
+      ca3_monthly: "Maandelijkse CA3"
+      ca3_quarterly: "Driemaandelijkse CA3"
+      ca12: "Jaarlijkse CA12"
+      none: "Geen (btw-vrijstelling)"
+    environments:
+      sandbox: "Testomgeving"
+      production: "Productie"
+    das2_natures:
+      fees: "Honoraria"
+      commissions: "Commissies"
+      brokerage: "Makelaarslonen"
+      rebates: "Ristorno's"
+      attendance: "Presentiegelden"
+      copyright: "Auteursrechten"
+      inventor: "Uitvindersrechten"
+      other: "Andere vergoedingen"
+    events:
+      manual: "Buiten Partiduo ingediend"
+      no_reason: "Reden niet meegedeeld"
+    errors:
+      regime: "Elektronische aangiften via TELEDEC gelden voor Franse dossiers."
+      kind:
+        unknown: "Onbekende soort aangifte."
+      fiscal_year:
+        unknown: "Onbekend boekjaar of boekjaar zonder periodes."
+      year:
+        blank: "Geef het kalenderjaar op."
+      number:
+        invalid: "Voorschotnummer van 1 tot 4."
+      amount:
+        invalid: "Positief bedrag of nul verwacht."
+      settings:
+        tax_system: "Kies eerst het belastingstelsel in de instellingen van TELEDEC."
+        tax_system_unknown: "Onbekend belastingstelsel."
+        vat_system_unknown: "Onbekend btw-stelsel."
+        das2_account: "Ongeldige DAS2-rekening: %{account}."
+        das2_threshold: "De DAS2-drempel is positief of nul."
+      corporate_tax:
+        not_applicable: "Opgaven van vennootschapsbelasting gelden alleen voor vennootschappen die eraan onderworpen zijn."
+      greffe:
+        disabled: "Neerlegging bij de griffie is niet ingeschakeld in de instellingen."
+      vat_return:
+        unknown: "Onbekende btw-aangifte."
+        form: "Deze btw-aangifte heeft niet het verwachte formulier."
+        open: "Sluit eerst de btw-aangifte af in de Boekhouding."
+      filing:
+        locked: "Deze aangifte is al %{status}: ze kan niet meer worden voorbereid."
+        status: "Niet mogelijk: de aangifte is %{status}."
+        changed: "De boekingen zijn gewijzigd sinds de voorbereiding: bereid de aangifte opnieuw voor."
+        not_ready:
+          one: "Een blokkerende controle verhindert de verzending."
+          other: "%{count} blokkerende controles verhinderen de verzending."
+      transport:
+        unavailable: "Rechtstreekse verzending naar TELEDEC is nog niet beschikbaar: exporteer de proef- en saldibalans en laad ze op de website van TELEDEC."
+        credentials: "TELEDEC weigert deze gegevens."
+        refused: "TELEDEC weigert de aangifte: %{reason}"
+        unreachable: "TELEDEC antwoordt niet; probeer later opnieuw."
+      credentials:
+        missing: "Sla eerst de API-gegevens van TELEDEC op."
+        login: "Gebruikersnaam verplicht (hoogstens 255 tekens)."
+        env: "Onbekende omgeving."
+        api_key: "API-sleutel verplicht."
+      outcome:
+        status: "Onbekende uitkomst."
+        reason: "Geef de reden van de weigering op."
+    controls:
+      siren: "Het SIREN-nummer van de vennootschap ontbreekt (instellingen van de vennootschap)."
+      address: "Het adres van de vennootschap is onvolledig."
+      balance_empty: "De proef- en saldibalans van het boekjaar is leeg."
+      balance_unbalanced: "De proef- en saldibalans is niet in evenwicht (verschil van %{difference})."
+      fiscal_year_open: "Het boekjaar is niet afgesloten: de balans kan nog wijzigen."
+      corporate_tax_zero: "Belastingbedrag nul."
+      liberal_not_ready:
+        one: "De voorbereide 2035 heeft een blokkerende controle (scherm 2035)."
+        other: "De voorbereide 2035 heeft %{count} blokkerende controles (scherm 2035)."
+      vat_system: "Het btw-stelsel in de instellingen voorziet niet in dit formulier."
+      das2_address: "Adres van begunstigde %{name} ontbreekt (leveranciersfiche)."
+      das2_siret: "SIRET van begunstigde %{name} ontbreekt (leveranciersfiche)."
+      das2_empty: "Geen begunstigde boven de drempel voor %{year}: geen DAS2 in te dienen."
+      das2_orphan: "Boeking %{receipt} (%{amount}) zonder fiche van derde: niet opgenomen in de DAS2."
+      changed: "De boekingen zijn gewijzigd sinds de voorbereiding: bereid de aangifte opnieuw voor."

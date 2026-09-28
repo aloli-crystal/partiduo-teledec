@@ -1,0 +1,15 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Repli (ADR-007 D5) : issue d'un dépôt fait sur le site de TELEDEC, hors de Partiduo — transmis (référence), accusé de réception (fichier de l'accusé conservé en pièce jointe) ou rejeté (motif obligatoire). #}<section class="pd-panel" aria-labelledby="pd-teledec-outcome">
+  <header><h2 id="pd-teledec-outcome">{% translate "teledec_ui.outcome.title" %}</h2></header>
+  <div class="pd-body">
+    <p class="help mb-3">{% translate "teledec_ui.outcome.help" %}</p>
+    <form method="post" action="{{ outcome_url }}" enctype="multipart/form-data" data-teledec-outcome>
+      {% csrf_input %}
+      <div class="field"><label class="label" for="pd-teledec-outcome-status">{% translate "teledec_ui.outcome.status" %}</label>
+        <div class="select"><select id="pd-teledec-outcome-status" name="status">{% if filing.prepared %}<option value="transmitted">{% translate "teledec.statuses.transmitted" %}</option>{% endif %}<option value="acknowledged">{% translate "teledec.statuses.acknowledged" %}</option><option value="rejected">{% translate "teledec.statuses.rejected" %}</option></select></div></div>
+      <div class="field"><label class="label" for="pd-teledec-outcome-reference">{% translate "teledec_ui.outcome.reference" %}</label><input class="input" type="text" id="pd-teledec-outcome-reference" name="reference" maxlength="128"></div>
+      <div class="field"><label class="label" for="pd-teledec-outcome-reason">{% translate "teledec_ui.outcome.reason" %}</label><textarea class="textarea" id="pd-teledec-outcome-reason" name="reason" rows="2"></textarea></div>
+      <div class="field"><label class="label" for="pd-teledec-outcome-receipt">{% translate "teledec_ui.outcome.receipt" %}</label><input class="input" type="file" id="pd-teledec-outcome-receipt" name="receipt" accept="application/pdf,application/xml,image/*"></div>
+      <button class="button pd-touch" type="submit">{% translate "teledec_ui.outcome.save" %}</button>
+    </form>
+  </div>
+</section>

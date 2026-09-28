@@ -1,0 +1,46 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Paramètres de TELEDEC (ADR-007 D4) : régime d'imposition (formulaires de la liasse), régime de TVA (CA3, CA12), option du dépôt des comptes au greffe, comptes et seuil de la DAS2 ; identifiants de l'API partenaire, chiffrés en base et jamais réaffichés, environnement de test ou de production toujours affiché. #}{% extend "ui/base.html" %}
+{% block title %}{{ title }}{% endblock title %}
+{% block crumbs %}{% include "ui/_crumbs.html" %}{% endblock crumbs %}
+{% block heading %}{{ title }} <span class="pd-ext">TELEDEC</span>{% endblock heading %}
+{% block content %}
+{% if base %}<div class="notification is-danger is-light pd-alert" role="alert">{% include "ui/_icon.html" with name="triangle-alert" %}<div><p>{{ base }}</p></div></div>{% endif %}
+<section class="pd-panel" aria-labelledby="pd-teledec-regime">
+  <header><h2 id="pd-teledec-regime">{% translate "teledec_ui.settings.regime" %}</h2></header>
+  <div class="pd-body">
+    <form method="post" action="" novalidate data-teledec-settings>
+      {% csrf_input %}
+      <div class="field"><label class="label" for="pd-teledec-tax-system">{% translate "teledec_ui.settings.tax_system" %}</label>
+        <div class="select"><select id="pd-teledec-tax-system" name="tax_system"{% if errors.tax_system %} aria-invalid="true"{% endif %}><option value="">{% translate "teledec_ui.settings.unset" %}</option>{% for option in tax_systems %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
+        {% if errors.tax_system %}<p class="help is-danger">{{ errors.tax_system }}</p>{% endif %}</div>
+      <div class="field"><label class="label" for="pd-teledec-vat-system">{% translate "teledec_ui.settings.vat_system" %}</label>
+        <div class="select"><select id="pd-teledec-vat-system" name="vat_system"><option value="">{% translate "teledec_ui.settings.unset" %}</option>{% for option in vat_systems %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
+        {% if errors.vat_system %}<p class="help is-danger">{{ errors.vat_system }}</p>{% endif %}</div>
+      <div class="field"><label class="checkbox"><input type="checkbox" name="greffe" value="1"{% if settings.greffe %} checked{% endif %}> {% translate "teledec_ui.settings.greffe" %}</label></div>
+      <div class="field"><label class="label" for="pd-teledec-das2-threshold">{% translate "teledec_ui.settings.das2_threshold" %}</label><input class="input pd-amount" type="text" inputmode="decimal" id="pd-teledec-das2-threshold" name="das2_threshold" value="{{ settings.das2_threshold }}">
+        {% if errors.das2_threshold %}<p class="help is-danger">{{ errors.das2_threshold }}</p>{% endif %}</div>
+      <div class="field"><label class="label" for="pd-teledec-das2-accounts">{% translate "teledec_ui.settings.das2_accounts" %}</label><textarea class="textarea pd-mono" id="pd-teledec-das2-accounts" name="das2_accounts" rows="4"{% if errors.das2_accounts %} aria-invalid="true"{% endif %}>{{ settings.das2_accounts }}</textarea>
+        <p class="help">{% translate "teledec_ui.settings.das2_help" %} {{ natures }}.</p>
+        {% if errors.das2_accounts %}<p class="help is-danger">{{ errors.das2_accounts }}</p>{% endif %}</div>
+      <button class="button is-primary pd-touch" type="submit">{% translate "ui.forms.save" %}</button>
+    </form>
+  </div>
+</section>
+
+<section class="pd-panel" aria-labelledby="pd-teledec-api">
+  <header><h2 id="pd-teledec-api">{% translate "teledec_ui.settings.api" %}</h2><span class="tag {% if settings.env_code == 'production' %}is-success{% else %}is-warning{% endif %}" data-teledec-env="{{ settings.env_code }}">{{ settings.env }}</span></header>
+  <div class="pd-body">
+    <p class="help mb-3">{% if settings.transport %}{% translate "teledec_ui.transport.available" name: settings.transport %}{% else %}{% translate "teledec_ui.settings.api_pending" %}{% endif %}</p>
+    {% if settings.checked_at %}<p class="mb-3">{% translate "teledec_ui.settings.checked_at" %} {{ settings.checked_at }}</p>{% endif %}
+    <form method="post" action="{% url 'teledec:credentials' %}" novalidate autocomplete="off" data-teledec-credentials>
+      {% csrf_input %}
+      <div class="field"><label class="label" for="pd-teledec-login">{% translate "teledec_ui.settings.login" %}</label><input class="input" type="text" id="pd-teledec-login" name="login" value="{{ settings.login }}"{% if errors.login %} aria-invalid="true"{% endif %}>
+        {% if errors.login %}<p class="help is-danger">{{ errors.login }}</p>{% endif %}</div>
+      <div class="field"><label class="label" for="pd-teledec-key">{% translate "teledec_ui.settings.api_key" %}</label><input class="input" type="password" id="pd-teledec-key" name="api_key" value="" autocomplete="new-password" placeholder="{% if settings.key_stored %}{% translate 'teledec_ui.settings.key_stored' %}{% endif %}"{% if errors.api_key %} aria-invalid="true"{% endif %}>
+        {% if errors.api_key %}<p class="help is-danger">{{ errors.api_key }}</p>{% endif %}</div>
+      <div class="field"><label class="label" for="pd-teledec-env">{% translate "teledec_ui.settings.env" %}</label><div class="select"><select id="pd-teledec-env" name="env">{% for option in environments %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div></div>
+      <button class="button is-primary pd-touch" type="submit">{% translate "ui.forms.save" %}</button>
+    </form>
+    {% if settings.key_stored %}<form method="post" action="{% url 'teledec:clear_credentials' %}" class="mt-3">{% csrf_input %}<button class="button is-danger is-light pd-touch" type="submit">{% translate "teledec_ui.settings.clear" %}</button></form>{% endif %}
+  </div>
+</section>
+{% endblock content %}

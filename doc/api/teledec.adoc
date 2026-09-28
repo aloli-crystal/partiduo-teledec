@@ -1,0 +1,104 @@
+= Extension TELEDEC : contrat `Teledec::Api`
+:toc: left
+:toc-title: Table des matières
+:toclevels: 3
+:icons: font
+:source-language: crystal
+
+Contrat public de l'extension (`src/teledec/api/teledec.cr`, types dans
+`types.cr`), sur le modèle de `Partiduo::Api` : acteur en premier argument,
+contrôle d'accès en première ligne, vues immuables ; `ModuleDisabled` si
+l'extension est inactive. Décisions : `../partiduo-app/DECISIONS.adoc`,
+D-TDC-001 à D-TDC-009.
+
+== Permissions
+
+[cols="1,3",options="header"]
+|===
+|Permission |Rôle
+
+|`teledec.return.read` |Échéances, dépôts, historique, document, accusé
+|`teledec.return.prepare` |Préparer, contrôler, exporter la balance (exige aussi `accounting.report.read`, ou `accounting.vat.declare` pour la TVA)
+|`teledec.return.transmit` |Transmettre, actualiser, noter l'issue d'un dépôt fait hors de Partiduo
+|`teledec.settings.manage` |Régime, options, identifiants de l'API
+|===
+
+== Paramètres
+
+* `settings(actor) : SettingsView` — régime d'imposition (`TAX_SYSTEMS` :
+  `is_rsi`, `is_rn`, `bic_rsi`, `bic_rn`, `bnc`, `sci`), régime de TVA
+  (`VAT_SYSTEMS` : `ca3_monthly`, `ca3_quarterly`, `ca12`, `none`), option
+  greffe, comptes (préfixe → nature, `DAS2_NATURES`) et seuil de la DAS2,
+  environnement, identifiant, `key_stored`, transport branché.
+* `update_settings(actor, SettingsInput)`.
+* `save_credentials(actor, CredentialsInput(login, api_key, env))` —
+  chiffrés ; vérifiés par le transport s'il est branché ; clé vide : clé
+  enregistrée gardée. `clear_credentials(actor)`.
+
+== Déclarations
+
+[cols="1,2,2",options="header"]
+|===
+|`kind` |Saisie (`PrepareInput`) |Document
+
+|`liasse` |`fiscal_year_id` |balance avant clôture, balance N-1, identité ; 2035 : cases et empreinte de `Liberal.tax_return`
+|`greffe` |`fiscal_year_id`, `confidential` |balance, identité
+|`is_2571` |`fiscal_year_id`, `number` (1 à 4), `amount` |montant de l'acompte (euros)
+|`is_2572` |`fiscal_year_id`, `amount` (défaut : solde du 695) |impôt, acomptes transmis, solde
+|`vat_ca3`, `vat_ca12` |`vat_return_id` (déclaration close) |cases non nulles (euros)
+|`das2` |`year` |bénéficiaires au-delà du seuil, montants TTC par nature
+|===
+
+* `schedule(actor, fiscal_year_id) : Array(DeadlineView)` — déclarations
+  attendues, échéance, dépôt existant, déclaration de TVA close de la
+  période.
+* `prepare(actor, input) : Result(FilingView)` — crée ou remet à jour le
+  dépôt (clé `liasse:<exercice>`, `vat_ca3:<début>`, `das2:<année>`,
+  `is_2571:<exercice>:<n>`…) ; refus si déjà transmis ou accusé
+  (`teledec.errors.filing.locked`).
+* `check(actor, id)` — recalcule : `teledec.controls.changed` si le
+  document a changé depuis la préparation.
+* `transmit(actor, id)` — refus : statut, document changé, contrôle
+  bloquant, transport absent (`teledec.errors.transport.unavailable`),
+  identifiants absents, erreur du transport (notée dans l'historique).
+  Clé d'idempotence : `partiduo-<dépôt>-<rang>-<empreinte>`.
+* `refresh(actor, id)`, `refresh_all(actor)` — accusé (pièce jointe du
+  socle) ou rejet (motif).
+* `record_outcome(actor, id, OutcomeInput)` — repli : transmis (référence),
+  accusé (fichier facultatif), rejeté (motif obligatoire).
+* `filings(actor, fiscal_year_id?)`, `filing(actor, id)`, `events(actor, id)`.
+* `balance_file(actor, fiscal_year_id)`, `export_file(actor, id)`,
+  `receipt_file(actor, id)`.
+
+`FilingView#ready?` : aucun contrôle bloquant (`ControlView#error?`).
+
+== Transport
+
+[source]
+----
+abstract class Teledec::Transport
+  abstract def name : String
+  abstract def check(credentials : Credentials) : Nil                   # TransportError
+  abstract def submit(credentials : Credentials, submission : Submission) : String # identifiant du dépôt
+  abstract def status(credentials : Credentials, remote_id : String) : RemoteStatus # pending, acknowledged, rejected
+end
+
+Teledec::Transports.current = … # nil tant que l'adaptateur réel n'existe pas
+----
+
+`TransportError#key` est une clé i18n (`teledec.errors.transport.*`).
+`Credentials#to_s` masque la clé.
+
+== Document transmis
+
+`Teledec::Payload` (schéma `partiduo-teledec/1`) : `kind`, `forms`,
+`identity`, `period_from`, `period_to`, `number`, `balance`,
+`previous_balance`, `boxes`, `das2`, `details`. Montants en texte décimal ;
+empreinte SHA-256 du JSON.
+
+== Base
+
+Tables `teledec_settings` (ligne unique), `teledec_filing` (valeurs
+contrôlées, accusé en clé étrangère vers `core_attachment`, déclencheur
+`teledec_filing_guard` : document intangible une fois transmis, accusé
+définitif), `teledec_filing_event`.

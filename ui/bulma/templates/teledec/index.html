@@ -1,0 +1,63 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Écran « Télédéclarations » (ADR-007 D4) : exercice choisi, échéances de l'exercice (déclaration, formulaires, période, date limite, statut du dépôt), préparation d'une déclaration depuis son échéance, dépôts de l'exercice, export de la balance au format d'import (repli tant que la transmission directe n'est pas branchée, ADR-007 D5). #}{% extend "ui/base.html" %}
+{% block title %}{{ title }}{% endblock title %}
+{% block crumbs %}{% include "ui/_crumbs.html" %}{% endblock crumbs %}
+{% block heading %}{{ title }} <span class="pd-ext">TELEDEC</span>{% endblock heading %}
+{% block content %}
+{% if transport %}<div class="notification is-info is-light pd-alert" role="status" data-teledec-transport="available">{% include "ui/_icon.html" with name="file-text" %}<div><p>{% translate "teledec_ui.transport.available" name: transport %}</p></div></div>
+{% else %}<div class="notification is-warning is-light pd-alert" role="status" data-teledec-transport="unavailable">{% include "ui/_icon.html" with name="triangle-alert" %}<div><p>{% translate "teledec_ui.transport.unavailable" %}</p>{% if fiscal_year %}{% if can_prepare %}<p class="mt-2"><a class="button is-small pd-touch" href="{{ fiscal_year.balance_url }}" data-teledec-balance>{% include "ui/_icon.html" with name="download" %}<span>{% translate "teledec_ui.actions.balance" %}</span></a></p>{% endif %}{% endif %}</div></div>{% endif %}
+{% if unconfigured %}<div class="notification is-light pd-alert" role="status" data-teledec-unconfigured>{% include "ui/_icon.html" with name="settings" %}<div><p>{% translate "teledec_ui.unconfigured" %}</p>{% if can_settings %}<p class="mt-2"><a href="{{ settings_url }}">{% translate "teledec_ui.settings.title" %}</a></p>{% endif %}</div></div>{% endif %}
+
+<section class="pd-panel" aria-labelledby="pd-teledec-year">
+  <header><h2 id="pd-teledec-year">{% translate "teledec_ui.fiscal_year" %}</h2></header>
+  <div class="pd-body">
+    {% if years %}<form method="get" action="" class="field has-addons">
+      <div class="control"><div class="select"><label class="is-sr-only" for="pd-teledec-fy">{% translate "teledec_ui.fiscal_year" %}</label><select id="pd-teledec-fy" name="fy">{% for year in years %}<option value="{{ year.id }}"{% if year.selected %} selected{% endif %}>{{ year.label }}</option>{% endfor %}</select></div></div>
+      <div class="control"><button class="button pd-touch" type="submit">{% translate "teledec_ui.actions.show" %}</button></div>
+    </form>
+    <dl class="pd-dl mt-3">
+      <dt>{% translate "teledec_ui.settings.tax_system" %}</dt><dd>{% if tax_system %}{{ tax_system }}{% else %}—{% endif %}</dd>
+      <dt>{% translate "teledec_ui.settings.vat_system" %}</dt><dd>{% if vat_system %}{{ vat_system }}{% else %}—{% endif %}</dd>
+    </dl>
+    {% else %}<p class="pd-muted">{% translate "teledec_ui.no_fiscal_year" %}</p>{% endif %}
+  </div>
+</section>
+
+{% if fiscal_year %}
+<section class="pd-panel" aria-labelledby="pd-teledec-deadlines">
+  <header><h2 id="pd-teledec-deadlines">{% translate "teledec_ui.deadlines.title" %}</h2>{% if can_transmit %}{% if transport %}<form method="post" action="{{ refresh_url }}">{% csrf_input %}<button class="button is-small pd-touch" type="submit">{% translate "teledec_ui.actions.refresh_all" %}</button></form>{% endif %}{% endif %}</header>
+  {% if deadlines %}<div class="pd-scroll"><table class="table is-fullwidth" data-teledec-deadlines>
+    <caption class="is-sr-only">{% translate "teledec_ui.deadlines.title" %}</caption>
+    <thead><tr><th scope="col">{% translate "teledec_ui.deadlines.due_on" %}</th><th scope="col">{% translate "teledec_ui.deadlines.return" %}</th><th scope="col" class="pd-hide-s">{% translate "teledec_ui.deadlines.forms" %}</th><th scope="col" class="pd-hide-s">{% translate "teledec_ui.deadlines.period" %}</th><th scope="col">{% translate "teledec_ui.deadlines.status" %}</th><th scope="col"><span class="is-sr-only">{% translate "teledec_ui.deadlines.actions" %}</span></th></tr></thead>
+    <tbody>{% for item in deadlines %}<tr data-teledec-deadline="{{ item.key }}">
+      <td>{{ item.due_on }}{% if item.overdue %} <span class="tag is-danger is-light">{% translate "teledec_ui.deadlines.overdue" %}</span>{% endif %}</td>
+      <td>{{ item.label }}{% if item.number %} n° {{ item.number }}{% endif %}</td>
+      <td class="pd-hide-s pd-mono">{{ item.forms }}</td>
+      <td class="pd-hide-s">{{ item.period }}</td>
+      <td>{% if item.status %}<a class="tag {{ item.status_class }} is-light" href="{{ item.filing_url }}" data-teledec-status="{{ item.status }}">{{ item.status_label }}</a>{% else %}<span class="pd-muted">{% translate "teledec_ui.deadlines.todo" %}</span>{% endif %}</td>
+      <td>{% if can_prepare %}{% if not item.locked %}{% if item.vat_missing %}<span class="is-size-7 pd-muted">{% translate "teledec_ui.deadlines.vat_missing" %}</span>{% else %}<form method="post" action="{{ prepare_url }}" class="pd-inline-form">{% csrf_input %}
+        <input type="hidden" name="kind" value="{{ item.kind }}"><input type="hidden" name="fiscal_year_id" value="{{ item.fiscal_year_id }}"><input type="hidden" name="year" value="{{ item.year }}"><input type="hidden" name="number" value="{{ item.number }}"><input type="hidden" name="vat_return_id" value="{{ item.vat_return_id }}">
+        {% if item.needs_amount %}<label class="is-sr-only" for="pd-teledec-amount-{{ item.number }}">{% translate "teledec_ui.deadlines.amount" %}</label><input class="input is-small pd-amount" type="text" inputmode="decimal" id="pd-teledec-amount-{{ item.number }}" name="amount" placeholder="{% translate 'teledec_ui.deadlines.amount' %}">{% endif %}
+        <button class="button is-small is-primary pd-touch" type="submit">{% if item.status %}{% translate "teledec_ui.actions.prepare_again" %}{% else %}{% translate "teledec_ui.actions.prepare" %}{% endif %}</button>
+      </form>{% endif %}{% endif %}{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="pd-body"><p class="pd-muted">{% translate "teledec_ui.deadlines.none" %}</p></div>{% endif %}
+</section>
+
+<section class="pd-panel" aria-labelledby="pd-teledec-filings">
+  <header><h2 id="pd-teledec-filings">{% translate "teledec_ui.filings.title" %}</h2></header>
+  {% if filings %}<div class="pd-scroll"><table class="table is-fullwidth" data-teledec-filings>
+    <caption class="is-sr-only">{% translate "teledec_ui.filings.title" %}</caption>
+    <thead><tr><th scope="col">{% translate "teledec_ui.deadlines.return" %}</th><th scope="col" class="pd-hide-s">{% translate "teledec_ui.deadlines.period" %}</th><th scope="col">{% translate "teledec_ui.filings.controls" %}</th><th scope="col">{% translate "teledec_ui.deadlines.status" %}</th></tr></thead>
+    <tbody>{% for filing in filings %}<tr>
+      <td><a href="{{ filing.url }}">{{ filing.label }}{% if filing.number %} n° {{ filing.number }}{% endif %}</a></td>
+      <td class="pd-hide-s">{{ filing.period }}</td>
+      <td>{% if filing.ready %}<span class="tag is-success is-light">{% translate "teledec_ui.filings.ready" %}</span>{% else %}<span class="tag is-danger is-light">{{ filing.blocking }}</span>{% endif %}</td>
+      <td><span class="tag {{ filing.status_class }} is-light" data-teledec-filing-status="{{ filing.status }}">{{ filing.status_label }}</span></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="pd-body"><p class="pd-muted">{% translate "teledec_ui.filings.none" %}</p></div>{% endif %}
+</section>
+{% endif %}
+<p class="help">{% translate "teledec_ui.formula" %}</p>
+{% endblock content %}

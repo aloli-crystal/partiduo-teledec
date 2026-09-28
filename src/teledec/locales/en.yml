@@ -1,0 +1,118 @@
+en:
+  teledec:
+    module:
+      name: "TELEDEC (tax e-filing)"
+    permissions:
+      return:
+        read: "View e-filings, their deadlines and acknowledgements"
+        prepare: "Prepare and check e-filings"
+        transmit: "Transmit e-filings to TELEDEC"
+      settings:
+        manage: "Configure TELEDEC (tax system, options, API credentials)"
+    menu:
+      returns: "E-filings"
+      settings: "TELEDEC"
+    transport: "TELEDEC"
+    kinds:
+      liasse: "Tax return package"
+      vat_ca3: "VAT return CA3"
+      vat_ca12: "VAT return CA12"
+      das2: "DAS2 (fees)"
+      is_2571: "Corporate tax instalment (2571)"
+      is_2572: "Corporate tax balance (2572)"
+      greffe: "Filing of accounts with the court registry"
+    statuses:
+      prepared: "Prepared"
+      transmitted: "Transmitted"
+      acknowledged: "Acknowledged"
+      rejected: "Rejected"
+      error: "Error"
+    tax_systems:
+      is_rsi: "Corporate tax, simplified (2065 and 2033)"
+      is_rn: "Corporate tax, standard (2065 and 2050)"
+      bic_rsi: "BIC income tax, simplified (2031 and 2033)"
+      bic_rn: "BIC income tax, standard (2031 and 2050)"
+      bnc: "BNC, controlled return (2035)"
+      sci: "Property company, income tax (2072)"
+    vat_systems:
+      ca3_monthly: "Monthly CA3"
+      ca3_quarterly: "Quarterly CA3"
+      ca12: "Annual CA12"
+      none: "None (VAT exemption)"
+    environments:
+      sandbox: "Test environment"
+      production: "Production"
+    das2_natures:
+      fees: "Fees"
+      commissions: "Commissions"
+      brokerage: "Brokerage"
+      rebates: "Rebates"
+      attendance: "Attendance fees"
+      copyright: "Copyright royalties"
+      inventor: "Inventor royalties"
+      other: "Other remuneration"
+    events:
+      manual: "Filed outside Partiduo"
+      no_reason: "Reason not given"
+    errors:
+      regime: "TELEDEC e-filings apply to French companies."
+      kind:
+        unknown: "Unknown return type."
+      fiscal_year:
+        unknown: "Unknown financial year or year without periods."
+      year:
+        blank: "Enter the calendar year."
+      number:
+        invalid: "Instalment number from 1 to 4."
+      amount:
+        invalid: "A positive or zero amount is expected."
+      settings:
+        tax_system: "First choose the tax system in the TELEDEC settings."
+        tax_system_unknown: "Unknown tax system."
+        vat_system_unknown: "Unknown VAT system."
+        das2_account: "Invalid DAS2 account: %{account}."
+        das2_threshold: "The DAS2 threshold is positive or zero."
+      corporate_tax:
+        not_applicable: "Corporate tax statements only apply to companies subject to corporate tax."
+      greffe:
+        disabled: "Filing of accounts with the registry is not enabled in the settings."
+      vat_return:
+        unknown: "Unknown VAT return."
+        form: "This VAT return is not of the expected form."
+        open: "First close the VAT return in Accounting."
+      filing:
+        locked: "This return is already %{status}: it can no longer be prepared."
+        status: "Not possible: the return is %{status}."
+        changed: "Entries changed since preparation: prepare the return again."
+        not_ready:
+          one: "A blocking check prevents transmission."
+          other: "%{count} blocking checks prevent transmission."
+      transport:
+        unavailable: "Direct transmission to TELEDEC is not available yet: export the trial balance and upload it on the TELEDEC website."
+        credentials: "TELEDEC refuses these credentials."
+        refused: "TELEDEC refuses the return: %{reason}"
+        unreachable: "TELEDEC does not answer; try again later."
+      credentials:
+        missing: "First save the TELEDEC API credentials."
+        login: "Login required (at most 255 characters)."
+        env: "Unknown environment."
+        api_key: "API key required."
+      outcome:
+        status: "Unknown outcome."
+        reason: "Enter the rejection reason."
+    controls:
+      siren: "No company SIREN (company settings)."
+      address: "The company address is incomplete."
+      balance_empty: "The trial balance of the financial year is empty."
+      balance_unbalanced: "The trial balance is not balanced (difference of %{difference})."
+      fiscal_year_open: "The financial year is not closed: the trial balance may still change."
+      corporate_tax_zero: "Zero tax amount."
+      liberal_not_ready:
+        one: "The prepared 2035 has a blocking check (2035 screen)."
+        other: "The prepared 2035 has %{count} blocking checks (2035 screen)."
+      vat_system: "The VAT system in the settings does not provide for this form."
+      das2_address: "No address for beneficiary %{name} (supplier card)."
+      das2_siret: "No SIRET for beneficiary %{name} (supplier card)."
+      das2_empty: "No beneficiary above the threshold for %{year}: no DAS2 to file."
+      das2_orphan: "Entry %{receipt} (%{amount}) without third-party card: not included in the DAS2."
+      changed: "Entries changed since preparation: prepare the return again."

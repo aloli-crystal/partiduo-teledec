@@ -1,0 +1,118 @@
+fr:
+  teledec:
+    module:
+      name: "TELEDEC (télédéclarations fiscales)"
+    permissions:
+      return:
+        read: "Voir les télédéclarations, leurs échéances et leurs accusés"
+        prepare: "Préparer et contrôler les télédéclarations"
+        transmit: "Transmettre les télédéclarations à TELEDEC"
+      settings:
+        manage: "Paramétrer TELEDEC (régime, options, identifiants de l'API)"
+    menu:
+      returns: "Télédéclarations"
+      settings: "TELEDEC"
+    transport: "TELEDEC"
+    kinds:
+      liasse: "Liasse fiscale"
+      vat_ca3: "TVA CA3"
+      vat_ca12: "TVA CA12"
+      das2: "DAS2 (honoraires)"
+      is_2571: "Acompte d'IS (2571)"
+      is_2572: "Solde d'IS (2572)"
+      greffe: "Dépôt des comptes au greffe"
+    statuses:
+      prepared: "Préparée"
+      transmitted: "Transmise"
+      acknowledged: "Accusé de réception"
+      rejected: "Rejetée"
+      error: "Erreur"
+    tax_systems:
+      is_rsi: "IS, régime simplifié (2065 et 2033)"
+      is_rn: "IS, régime normal (2065 et 2050)"
+      bic_rsi: "BIC à l'IR, régime simplifié (2031 et 2033)"
+      bic_rn: "BIC à l'IR, régime normal (2031 et 2050)"
+      bnc: "BNC, déclaration contrôlée (2035)"
+      sci: "SCI à l'IR (2072)"
+    vat_systems:
+      ca3_monthly: "CA3 mensuelle"
+      ca3_quarterly: "CA3 trimestrielle"
+      ca12: "CA12 annuelle"
+      none: "Aucune (franchise en base)"
+    environments:
+      sandbox: "Environnement de test"
+      production: "Production"
+    das2_natures:
+      fees: "Honoraires et vacations"
+      commissions: "Commissions"
+      brokerage: "Courtages"
+      rebates: "Ristournes"
+      attendance: "Jetons de présence"
+      copyright: "Droits d'auteur"
+      inventor: "Droits d'inventeur"
+      other: "Autres rémunérations"
+    events:
+      manual: "Déposée hors de Partiduo"
+      no_reason: "Motif non communiqué"
+    errors:
+      regime: "Les télédéclarations TELEDEC concernent les dossiers français."
+      kind:
+        unknown: "Sorte de déclaration inconnue."
+      fiscal_year:
+        unknown: "Exercice inconnu ou sans période."
+      year:
+        blank: "Indiquez l'année civile."
+      number:
+        invalid: "Numéro d'acompte de 1 à 4."
+      amount:
+        invalid: "Montant positif ou nul attendu."
+      settings:
+        tax_system: "Choisissez d'abord le régime d'imposition dans les paramètres de TELEDEC."
+        tax_system_unknown: "Régime d'imposition inconnu."
+        vat_system_unknown: "Régime de TVA inconnu."
+        das2_account: "Compte de la DAS2 invalide : %{account}."
+        das2_threshold: "Le seuil de la DAS2 est positif ou nul."
+      corporate_tax:
+        not_applicable: "Les relevés d'IS ne concernent que les entreprises soumises à l'impôt sur les sociétés."
+      greffe:
+        disabled: "Le dépôt des comptes au greffe n'est pas activé dans les paramètres."
+      vat_return:
+        unknown: "Déclaration de TVA inconnue."
+        form: "Cette déclaration de TVA n'est pas du formulaire attendu."
+        open: "Clôturez d'abord la déclaration de TVA dans la Comptabilité."
+      filing:
+        locked: "Cette déclaration est déjà %{status} : elle ne se prépare plus."
+        status: "Opération impossible : la déclaration est %{status}."
+        changed: "Les écritures ont changé depuis la préparation : préparez de nouveau la déclaration."
+        not_ready:
+          one: "Un contrôle bloquant empêche la transmission."
+          other: "%{count} contrôles bloquants empêchent la transmission."
+      transport:
+        unavailable: "La transmission directe à TELEDEC n'est pas encore disponible : exportez la balance et déposez-la sur le site de TELEDEC."
+        credentials: "TELEDEC refuse ces identifiants."
+        refused: "TELEDEC refuse la déclaration : %{reason}"
+        unreachable: "TELEDEC ne répond pas ; réessayez plus tard."
+      credentials:
+        missing: "Enregistrez d'abord les identifiants de l'API TELEDEC."
+        login: "Identifiant obligatoire (255 caractères au plus)."
+        env: "Environnement inconnu."
+        api_key: "Clé de l'API obligatoire."
+      outcome:
+        status: "Issue inconnue."
+        reason: "Indiquez le motif du rejet."
+    controls:
+      siren: "Le SIREN de la société manque (paramètres de la société)."
+      address: "L'adresse de la société est incomplète."
+      balance_empty: "La balance de l'exercice est vide."
+      balance_unbalanced: "La balance n'est pas équilibrée (écart de %{difference})."
+      fiscal_year_open: "L'exercice n'est pas clôturé : la balance peut encore changer."
+      corporate_tax_zero: "Montant d'impôt nul."
+      liberal_not_ready:
+        one: "La 2035 préparée a un contrôle bloquant (écran 2035)."
+        other: "La 2035 préparée a %{count} contrôles bloquants (écran 2035)."
+      vat_system: "Le régime de TVA des paramètres ne prévoit pas ce formulaire."
+      das2_address: "Adresse du bénéficiaire %{name} manquante (fiche fournisseur)."
+      das2_siret: "SIRET du bénéficiaire %{name} manquant (fiche fournisseur)."
+      das2_empty: "Aucun bénéficiaire au-delà du seuil pour %{year} : pas de DAS2 à déposer."
+      das2_orphan: "Écriture %{receipt} (%{amount}) sans fiche de tiers : non reprise dans la DAS2."
+      changed: "Les écritures ont changé depuis la préparation : préparez de nouveau la déclaration."

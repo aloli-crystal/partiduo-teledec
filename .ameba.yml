@@ -1,0 +1,12 @@
+# Configuration d'Ameba pour partiduo-teledec.
+Globs:
+  - "**/*.cr"
+  - "!lib"
+
+Excluded:
+  - lib/
+
+# Contrôles d'une déclaration : un branchement par règle métier (régime,
+# formulaire, identité, balance), comme les contrôles de la 2035 du cœur.
+Metrics/CyclomaticComplexity:
+  MaxComplexity: 20

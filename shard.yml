@@ -1,0 +1,36 @@
+name: partiduo-teledec
+version: 0.1.0
+
+description: |
+  Extension TELEDEC de Partiduo (ADR-007 D4, D5) : télédéclarations
+  fiscales par le partenaire EDI TELEDEC, formule « API Balance » — liasse
+  fiscale selon le régime (2033, 2050, 2035, 2031, 2065, 2072), TVA CA3 et
+  CA12, DAS2, relevés d'IS 2571 et 2572, dépôt des comptes au greffe ;
+  suivi des dépôts et accusés de réception ; export de la balance en repli.
+
+authors:
+  - Philippe Nénert <it+claude.ai@aloli.fr>
+
+crystal: ">= 1.19.1"
+
+license: AGPL-3.0-or-later
+
+targets:
+  partiduo-teledec-manage:
+    main: manage.cr
+
+dependencies:
+  # Le cœur : registre, événements et contrat Partiduo::Api.
+  partiduo:
+    path: ../partiduo-app
+  marten:
+    path: ../../marten
+
+development_dependencies:
+  # L'interface qui monte ui/bulma/ : nécessaire aux specs et à manage.cr ;
+  # la distribution l'apporte elle-même.
+  partiduo-ui-bulma:
+    path: ../partiduo-ui-bulma
+  ameba:
+    github: crystal-ameba/ameba
+    version: "~> 1.6"
