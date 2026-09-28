@@ -63,6 +63,14 @@ describe "Conventions de l'extension TELEDEC" do
     missing.should be_empty
   end
 
+  it "ne cite pas le logiciel d'origine hors *.adoc et *.md" do
+    name = "noa" + "lyss"
+    output = IO::Memory.new
+    Process.run("git", ["grep", "-il", name, "--", ".", ":!*.adoc", ":!*.md"],
+      chdir: Teledec::SpecSupport::ROOT, output: output)
+    output.to_s.lines.should be_empty
+  end
+
   it "range ses tables sous le préfixe teledec_ (ADR-003 D5)" do
     [Teledec::Settings, Teledec::Filing, Teledec::FilingEvent].map(&.db_table)
       .should eq(%w[teledec_settings teledec_filing teledec_filing_event])
