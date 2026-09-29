@@ -47,11 +47,12 @@ module Teledec
       nil
     end
 
-    def self.supplier(name : String, siret : String? = SIRET, address : Bool = true) : String
+    def self.supplier(name : String, siret : String? = SIRET, address : Bool = true, **person) : String
       category = PartiduoUi::Reference.category("SUPPLIER")
       input = Partiduo::Api::Cards::CardInput.new(category_id: category.id, name: name, siret: siret,
         description: "Avocat",
         address: address ? Partiduo::Api::Cards::AddressInput.new(line1: "3 rue des Lilas", postcode: "69003", city: "Lyon", country_code: "FR") : nil)
+        .copy_with(**person)
       Partiduo::Api::Cards.create_card(SYSTEM, input).value!.code
     end
 

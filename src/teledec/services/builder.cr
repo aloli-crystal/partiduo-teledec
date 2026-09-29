@@ -218,9 +218,16 @@ module Teledec
           controls << error("teledec.controls.das2_address", {"name" => name})
         end
         controls << warning("teledec.controls.das2_siret", {"name" => name}) if siret.empty? && country == "FR"
+        # Personne physique (fiche fournisseur `individual`) : nom, prénoms
+        # et date de naissance à la place de la raison sociale ; nature non
+        # précisée : avertissement, déclaré en raison sociale.
+        person = card.try(&.individual_supplier?) || false
+        card.try { |view| controls.concat(person_controls(view)) }
         Payload::Das2Line.new(item.card_code, name, siret, card.try(&.description).to_s, address.try(&.line1).to_s,
           address.try(&.postcode).to_s, address.try(&.city).to_s, country,
-          item.amounts.transform_values { |value| Money.euros_text(value) }, Money.euros_text(item.total))
+          item.amounts.transform_values { |value| Money.euros_text(value) }, Money.euros_text(item.total),
+          person, person ? card.try(&.last_name).to_s : "", person ? card.try(&.first_names).to_s : "",
+          person ? card.try(&.birth_date).try(&.to_s("%F")).to_s : "")
       end
       controls << error("teledec.controls.das2_empty", {"year" => year.to_s}) if lines.empty?
       # Nature sans lettre de la DGFiP : la rémunération irait dans une
@@ -237,6 +244,20 @@ module Teledec
         {"threshold" => Money.euros_text(settings.das2_threshold || Config::DAS2_THRESHOLD)})
       Partiduo::Api::Result(Built).success(Built.new("das2:#{year}", "das2", forms, fiscal_year_for(ends_on).try(&.id),
         year, 0, starts_on, ends_on, Calendar.das2(year), nil, payload, controls))
+    end
+
+    # Avertissements sur l'identité d'un bénéficiaire : nature du
+    # fournisseur non précisée, date de naissance d'une personne physique
+    # manquante.
+    private def self.person_controls(card : Partiduo::Api::Cards::CardView) : Array(ControlView)
+      controls = [] of ControlView
+      if card.kind == "supplier" && card.supplier_nature.empty?
+        controls << warning("teledec.controls.das2_nature_unset", {"name" => card.name})
+      end
+      if card.individual_supplier? && card.birth_date.nil?
+        controls << warning("teledec.controls.das2_birth_date", {"name" => card.name})
+      end
+      controls
     end
 
     # --- Communs -------------------------------------------------------------

@@ -65,7 +65,7 @@
   <div class="pd-scroll"><table class="table is-fullwidth" data-teledec-das2>
     <caption class="is-sr-only">{% translate "teledec_ui.filing.das2" %}</caption>
     <thead><tr><th scope="col">{% translate "teledec_ui.filing.beneficiary" %}</th><th scope="col" class="pd-hide-s">{% translate "teledec_ui.filing.siret" %}</th><th scope="col" class="pd-hide-s">{% translate "teledec_ui.filing.natures" %}</th><th scope="col" class="has-text-right">{% translate "teledec_ui.filing.total" %}</th></tr></thead>
-    <tbody>{% for line in das2 %}<tr><td>{{ line.name }}<br><span class="is-size-7 pd-muted">{{ line.address }}</span></td><td class="pd-hide-s pd-mono">{% if line.siret %}{{ line.siret }}{% else %}—{% endif %}</td><td class="pd-hide-s">{{ line.natures }}</td><td class="has-text-right pd-mono">{{ line.total }}</td></tr>{% endfor %}</tbody>
+    <tbody>{% for line in das2 %}<tr><td>{{ line.name }}{% if line.person %}<br><span class="is-size-7" data-teledec-person>{{ line.person }}</span>{% endif %}<br><span class="is-size-7 pd-muted">{{ line.address }}</span></td><td class="pd-hide-s pd-mono">{% if line.siret %}{{ line.siret }}{% else %}—{% endif %}</td><td class="pd-hide-s">{{ line.natures }}</td><td class="has-text-right pd-mono">{{ line.total }}</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>{% endif %}
 

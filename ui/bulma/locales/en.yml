@@ -62,6 +62,8 @@ en:
       amount: "Amount"
       das2: "DAS2 beneficiaries"
       beneficiary: "Beneficiary"
+      person: "Natural person: %{identity}"
+      born: "born %{date}"
       siret: "SIRET"
       natures: "Amounts by nature"
       total: "Total"

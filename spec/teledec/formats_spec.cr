@@ -234,6 +234,33 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       totals.should eq({"H" => 2200, "R" => 301, "V" => 90})
     end
 
+    it "déclare une personne physique par ses nom, prénoms et date de naissance (AE_3036_*, AI)" do
+      lines = [
+        Payload::Das2Line.new("F1", "DURAND Paul", "40483304800006", "Avocat", "3 rue des Lilas", "69003", "Lyon", "FR",
+          {"fees" => "1500", "rebates" => "300"}, "1800", true, "DURAND", "Paul Marie", "1971-04-02"),
+        Payload::Das2Line.new("F3", "MOREL Anne", "", "", "", "", "", "FR", {"fees" => "900"}, "900", true, "MOREL", "Anne"),
+        Payload::Das2Line.new("F2", "Agence Martin", "", "", "", "", "", "FR", {"fees" => "700"}, "700"),
+      ]
+      payload = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", das2: lines)
+      repetitions = white_label(payload)["DAS2"]["repetitionDAS2TV"].as_a
+      repetitions[0..1].each do |item|
+        {item["AE_3036_1"].as_s, item["AE_3036_2"].as_s, item["AI"].as_s}.should eq({"DURAND", "Paul Marie", "1971-04-02"})
+        item["AF_3036_1"]?.should be_nil
+        item["AF_3039_1"].as_s.should eq("40483304800006")
+      end
+      {repetitions[2]["AE_3036_1"].as_s, repetitions[2]["AE_3036_2"].as_s}.should eq({"MOREL", "Anne"})
+      repetitions[2]["AI"]?.should be_nil
+      repetitions[3]["AF_3036_1"].as_s.should eq("Agence Martin")
+      repetitions[3]["AE_3036_1"]?.should be_nil
+    end
+
+    it "lit un bénéficiaire préparé avant la nature de fournisseur comme une personne morale" do
+      json = %({"card_code":"F2","name":"Agence Martin","siret":"","profession":"","address":"","postcode":"",) +
+             %("city":"","country_code":"FR","amounts":{"fees":"700"},"total":"700"})
+      line = Payload::Das2Line.from_json(json)
+      {line.person?, line.last_name, line.first_names, line.birth_date}.should eq({false, "", "", ""})
+    end
+
     it "refuse une nature de DAS2 sans lettre plutôt que de la déclarer en « autres »" do
       lines = [Payload::Das2Line.new("F2", "Agence Martin", "", "", "", "", "", "FR", {"mystere" => "90"}, "90")]
       payload = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", das2: lines)

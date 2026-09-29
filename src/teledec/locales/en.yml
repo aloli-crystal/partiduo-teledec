@@ -138,6 +138,8 @@ en:
       vat_system: "The VAT system in the settings does not provide for this form."
       das2_address: "No address for beneficiary %{name} (supplier card)."
       das2_siret: "No SIRET for beneficiary %{name} (supplier card)."
+      das2_nature_unset: "Nature of beneficiary %{name} not specified (supplier card): declared under its business name."
+      das2_birth_date: "No date of birth for beneficiary %{name} (supplier who is a natural person)."
       das2_empty: "No beneficiary above the threshold for %{year}: no DAS2 to file."
       das2_nature: "Remuneration type \"%{nature}\" has no DAS2 letter (fix the DAS2 accounts)."
       das2_orphan: "Entry %{receipt} (%{amount}) without third-party card: not included in the DAS2."

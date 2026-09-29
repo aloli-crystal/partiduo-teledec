@@ -150,8 +150,13 @@ module Teledec
 
       def self.das2(line : Api::Das2LineView, fmt : PartiduoUi::Format) : Row
         natures = line.amounts.map { |nature, amount| "#{I18n.t("teledec.das2_natures.#{nature}")} : #{fmt.amount(amount, 0)}" }
+        person = if line.person
+                   identity = "#{line.last_name} #{line.first_names}".strip
+                   born = line.birth_date.try { |day| I18n.t("teledec_ui.filing.born", {"date" => fmt.date(day)}) }
+                   I18n.t("teledec_ui.filing.person", {"identity" => [identity, born].compact.join(", ")})
+                 end
         Ui.row({"code" => line.card_code, "name" => line.name, "siret" => line.siret.presence, "address" => line.address,
-                "natures" => natures.join(" ; "), "total" => fmt.amount(line.total, 0)})
+                "natures" => natures.join(" ; "), "total" => fmt.amount(line.total, 0), "person" => person})
       end
 
       def self.detail(key : String, value : String, fmt : PartiduoUi::Format) : Row?

@@ -61,6 +61,17 @@ describe "Écran Télédéclarations sous /ext/TELEDEC/ (ADR-005 D4)" do
     browser.get("#{location}/export").content.should contain(%("schema":"partiduo-teledec/1"))
   end
 
+  it "montre l'identité d'un bénéficiaire personne physique de la DAS2" do
+    browser = signed_in
+    code = S.supplier("Cabinet Durand", supplier_nature: "individual", last_name: "DURAND", first_names: "Paul",
+      birth_date: Time.utc(1971, 4, 2))
+    S.fees(code, "1500")
+    response = browser.post("/ext/TELEDEC/prepare", {"kind" => "das2", "year" => "2026"})
+    response.status.should eq(302)
+    page = browser.get(response.headers["Location"]).html
+    page.should contain(%(data-teledec-person>Personne physique : DURAND Paul, né(e) le 02/04/1971))
+  end
+
   it "transmet par le transport et affiche l'accusé" do
     browser = signed_in
     S.connect

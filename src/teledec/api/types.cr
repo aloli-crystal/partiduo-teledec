@@ -67,8 +67,11 @@ module Teledec
     record BalanceRowView, account : String, label : String, debit : BigDecimal, credit : BigDecimal,
       balance_debit : BigDecimal, balance_credit : BigDecimal
 
+    # Bénéficiaire de la DAS2 ; `person` : personne physique, déclarée par
+    # `last_name`, `first_names` et `birth_date` plutôt que par `name`.
     record Das2LineView, card_code : String, name : String, siret : String, address : String,
-      amounts : Hash(String, BigDecimal), total : BigDecimal
+      amounts : Hash(String, BigDecimal), total : BigDecimal, person : Bool = false, last_name : String = "",
+      first_names : String = "", birth_date : Time? = nil
 
     record BoxView, form : String, box : String, amount : BigDecimal
 

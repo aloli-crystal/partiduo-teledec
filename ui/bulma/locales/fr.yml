@@ -62,6 +62,8 @@ fr:
       amount: "Montant"
       das2: "Bénéficiaires de la DAS2"
       beneficiary: "Bénéficiaire"
+      person: "Personne physique : %{identity}"
+      born: "né(e) le %{date}"
       siret: "SIRET"
       natures: "Montants par nature"
       total: "Total"

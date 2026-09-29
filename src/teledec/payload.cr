@@ -51,7 +51,10 @@ module Teledec
     end
 
     # Bénéficiaire de la DAS2 : identité de la fiche fournisseur, montants
-    # par nature (euros entiers).
+    # par nature (euros entiers). Personne physique (`person`, fiche
+    # fournisseur de nature `individual`) : nom, prénoms et date de
+    # naissance (`AAAA-MM-JJ`, vide si inconnue) ; absents des documents
+    # préparés avant cette distinction, lus alors comme une personne morale.
     class Das2Line
       include JSON::Serializable
 
@@ -65,8 +68,13 @@ module Teledec
       getter country_code : String
       getter amounts : Hash(String, String)
       getter total : String
+      getter? person : Bool = false
+      getter last_name : String = ""
+      getter first_names : String = ""
+      getter birth_date : String = ""
 
-      def initialize(@card_code, @name, @siret, @profession, @address, @postcode, @city, @country_code, @amounts, @total)
+      def initialize(@card_code, @name, @siret, @profession, @address, @postcode, @city, @country_code, @amounts, @total,
+                     @person = false, @last_name = "", @first_names = "", @birth_date = "")
       end
     end
 

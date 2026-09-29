@@ -43,7 +43,9 @@ entiers.
 |DAS2
 |Honoraires, commissions, droits d'auteur… par bénéficiaire, depuis les
 écritures des comptes paramétrés et les fiches fournisseurs ; seuil de
-1 200 € ; montants toutes taxes comprises.
+1 200 € ; montants toutes taxes comprises. Fournisseur « personne
+physique » (nature de la fiche) déclaré par ses nom, prénoms et date de
+naissance, les autres en raison sociale.
 
 |Relevés d'IS
 |Acomptes (2571, quatre par exercice) et solde (2572, acomptes transmis

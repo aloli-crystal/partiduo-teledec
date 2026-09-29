@@ -294,9 +294,11 @@ module Teledec
 
       # DAS2 : établissement déclarant, une répétition par bénéficiaire et
       # par nature (lettre de la DGFiP, SIRET de l'établissement en `AD`),
-      # totaux par nature. Le bénéficiaire est déclaré en raison sociale
-      # (`AF_3036_1`) : les fiches fournisseurs ne distinguent pas la
-      # personne physique (`AE_3036_*`, BLOCAGES B-TDC-004).
+      # totaux par nature. Bénéficiaire personne physique (fiche fournisseur
+      # `individual`) : nom (`AE_3036_1`), prénoms (`AE_3036_2`) et date de
+      # naissance (`AI`, `AAAA-MM-JJ` comme les dates de la période, forme
+      # à confirmer sur le stage, BLOCAGES B-TDC-004) ; sinon raison sociale
+      # (`AF_3036_1`). DECISIONS D-R5-002.
       private def self.das2_block(payload : Payload, credentials : Credentials) : Hash(String, JSON::Any)
         identity = payload.identity
         lines = payload.das2 || [] of Payload::Das2Line
@@ -321,7 +323,13 @@ module Teledec
             item = {} of String => JSON::Any
             establishment.try { |number| item["AD"] = JSON::Any.new(number) }
             item["AF_3039_1"] = JSON::Any.new(line.siret) unless line.siret.empty?
-            item["AF_3036_1"] = JSON::Any.new(line.name)
+            if line.person?
+              item["AE_3036_1"] = JSON::Any.new(line.last_name)
+              item["AE_3036_2"] = JSON::Any.new(line.first_names)
+              item["AI"] = JSON::Any.new(line.birth_date) unless line.birth_date.empty?
+            else
+              item["AF_3036_1"] = JSON::Any.new(line.name)
+            end
             item["AG_3042_1"] = JSON::Any.new(line.address) unless line.address.empty?
             item["AG_3251_1"] = JSON::Any.new(line.postcode) unless line.postcode.empty?
             item["AG_3164_1"] = JSON::Any.new(line.city) unless line.city.empty?

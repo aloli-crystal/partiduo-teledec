@@ -138,6 +138,8 @@ fr:
       vat_system: "Le régime de TVA des paramètres ne prévoit pas ce formulaire."
       das2_address: "Adresse du bénéficiaire %{name} manquante (fiche fournisseur)."
       das2_siret: "SIRET du bénéficiaire %{name} manquant (fiche fournisseur)."
+      das2_nature_unset: "Nature du bénéficiaire %{name} non précisée (fiche fournisseur) : déclaré en raison sociale."
+      das2_birth_date: "Date de naissance du bénéficiaire %{name} manquante (fournisseur personne physique)."
       das2_empty: "Aucun bénéficiaire au-delà du seuil pour %{year} : pas de DAS2 à déposer."
       das2_nature: "Nature de rémunération « %{nature} » sans lettre de la DAS2 (comptes de la DAS2 à corriger)."
       das2_orphan: "Écriture %{receipt} (%{amount}) sans fiche de tiers : non reprise dans la DAS2."

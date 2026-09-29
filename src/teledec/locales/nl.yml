@@ -138,6 +138,8 @@ nl:
       vat_system: "Het btw-stelsel in de instellingen voorziet niet in dit formulier."
       das2_address: "Adres van begunstigde %{name} ontbreekt (leveranciersfiche)."
       das2_siret: "SIRET van begunstigde %{name} ontbreekt (leveranciersfiche)."
+      das2_nature_unset: "Aard van begunstigde %{name} niet opgegeven (leveranciersfiche): aangegeven onder handelsnaam."
+      das2_birth_date: "Geboortedatum van begunstigde %{name} ontbreekt (leverancier die een natuurlijk persoon is)."
       das2_empty: "Geen begunstigde boven de drempel voor %{year}: geen DAS2 in te dienen."
       das2_nature: "Vergoedingssoort \"%{nature}\" heeft geen DAS2-letter (DAS2-rekeningen corrigeren)."
       das2_orphan: "Boeking %{receipt} (%{amount}) zonder fiche van derde: niet opgenomen in de DAS2."

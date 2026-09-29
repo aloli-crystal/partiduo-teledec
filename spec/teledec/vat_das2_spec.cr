@@ -76,6 +76,29 @@ describe "DAS2 (honoraires, depuis les fiches fournisseurs et les écritures)" d
     filing.ready?.should be_true
   end
 
+  it "déclare un fournisseur personne physique par son identité et avertit des fiches à compléter" do
+    S.books
+    person = S.supplier("Cabinet Durand", supplier_nature: "individual", last_name: "DURAND", first_names: "Paul",
+      birth_date: Time.utc(1971, 4, 2))
+    unborn = S.supplier("Conseil Morel", supplier_nature: "individual", last_name: "MOREL", first_names: "Anne")
+    unset = S.supplier("Agence Martin")
+    company = S.supplier("Société Leroy", supplier_nature: "business")
+    [person, unborn, unset, company].each { |code| S.fees(code, "1500") }
+    filing = S.prepare("das2", year: 2026)
+    durand = filing.das2.find! { |line| line.card_code == person }
+    {durand.person, durand.last_name, durand.first_names, durand.birth_date}
+      .should eq({true, "DURAND", "Paul", Time.utc(1971, 4, 2)})
+    morel = filing.das2.find! { |line| line.card_code == unborn }
+    {morel.person, morel.birth_date}.should eq({true, nil})
+    filing.das2.find! { |line| line.card_code == company }.person.should be_false
+    filing.das2.find! { |line| line.card_code == unset }.person.should be_false
+    warnings = filing.warnings.map { |item| {item.key, item.params["name"]?} }
+    warnings.should contain({"teledec.controls.das2_birth_date", "Conseil Morel"})
+    warnings.should contain({"teledec.controls.das2_nature_unset", "Agence Martin"})
+    warnings.should_not contain({"teledec.controls.das2_nature_unset", "Société Leroy"})
+    filing.ready?.should be_true
+  end
+
   it "bloque une DAS2 sans bénéficiaire ou dont un bénéficiaire n'a pas d'adresse" do
     S.books
     Api.prepare(S.admin, Api::PrepareInput.new("das2")).error_keys.should eq(["teledec.errors.year.blank"])

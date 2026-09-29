@@ -160,8 +160,10 @@ module Teledec
       end
       das2 = (payload.das2 || [] of Payload::Das2Line).map do |line|
         address = [line.address, "#{line.postcode} #{line.city}".strip].reject(&.blank?).join(", ")
+        born = line.birth_date.presence.try { |day| Time.parse(day, "%F", Time::Location::UTC) }
         Api::Das2LineView.new(line.card_code, line.name, line.siret, address,
-          line.amounts.transform_values { |value| Money.parse(value) }, Money.parse(line.total))
+          line.amounts.transform_values { |value| Money.parse(value) }, Money.parse(line.total),
+          line.person?, line.last_name, line.first_names, born)
       end
       Api::FilingView.new(
         id: filing.id!.to_i64,

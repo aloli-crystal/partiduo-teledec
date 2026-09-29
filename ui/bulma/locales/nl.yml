@@ -62,6 +62,8 @@ nl:
       amount: "Bedrag"
       das2: "Begunstigden van de DAS2"
       beneficiary: "Begunstigde"
+      person: "Natuurlijk persoon: %{identity}"
+      born: "geboren op %{date}"
       siret: "SIRET"
       natures: "Bedragen per aard"
       total: "Totaal"
