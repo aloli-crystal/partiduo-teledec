@@ -33,7 +33,8 @@ module Teledec
       # Cases de la CA3 de Partiduo (lignes du 3310-CA3) → codes TELEDEC du
       # formulaire `3310CA3`, par premier millésime d'application. La
       # ligne 14 (taux particuliers) se détaille sur l'annexe 3310-A, que
-      # Partiduo ne tient pas (D-TVA-006) : non transmissible.
+      # Partiduo prépare taux par taux (D-R5-006) mais dont les codes
+      # TELEDEC ne sont pas connus sûrement (B-TDC-004) : non transmissible.
       CA3_CODES = {
         2024 => {
           "A1" => "CA", "A2" => "CB", "A3" => "KH", "A4" => "KW", "A5" => "KX", "B2" => "KZ", "B4" => "CG",
