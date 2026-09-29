@@ -2,9 +2,13 @@
 
 # Manifeste de l'extension TELEDEC (ADR-003 D2, ADR-007 D4).
 #
-# * Dépendance : `ACCOUNTING` (la balance de l'exercice, les déclarations de
-#   TVA du lot 4, les écritures de la DAS2). La 2035 préparée par le module
-#   `liberal` est lue s'il est actif (DECISIONS D-TDC-002).
+# * Dépendance : `ACCOUNTING` *ou* `LIBERAL` (`depends_on_any`, ADR-003 D2 ;
+#   ADR-007 D4 amendé, DECISIONS D-TDC-002 et D-TDC2-001). Avec la
+#   Comptabilité : toutes les déclarations (balance de l'exercice,
+#   déclarations de TVA du lot 4, écritures de la DAS2, relevés d'IS), la
+#   2035 joignant les cases du module `liberal` s'il est actif. Avec le
+#   module `liberal` seul : la liasse 2035 seulement, construite à partir de
+#   la 2035 qu'il prépare, sans balance (`Teledec::Sources`).
 # * Permissions : `teledec.return.read` (voir les échéances, les dépôts et
 #   les accusés), `teledec.return.prepare` (préparer et contrôler une
 #   déclaration, exporter la balance), `teledec.return.transmit`
@@ -18,7 +22,7 @@ Partiduo::Modules.register do
   name "teledec.module.name"
   version "0.1.0"
   requires_core "~> 0.1"
-  depends_on "ACCOUNTING"
+  depends_on_any "ACCOUNTING", "LIBERAL"
 
   permission "teledec.return.read"
   permission "teledec.return.prepare"

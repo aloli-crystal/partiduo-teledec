@@ -41,6 +41,45 @@ module Teledec
       nil
     end
 
+    # Droits d'un préparateur de la 2035 sans la Comptabilité.
+    LIBERAL = [Api::READ, Api::PREPARE, Api::TRANSMIT, Api::SETTINGS, "liberal.register.read"]
+
+    # Libéral : dossier français, exercice 2026, administrateur, module
+    # `liberal` paramétré (kinésithérapeute), TELEDEC actif ; la
+    # Comptabilité (active par `PARTIDUO_MODULES` pour provisionner le
+    # dossier) est désactivée ensuite sauf `accounting: true`. Régime
+    # d'imposition non choisi.
+    def self.liberal_books(accounting : Bool = false) : Nil
+      PartiduoUi::Reference.provision("fr")
+      @@fiscal_year_id = PartiduoUi::Reference.fiscal_year(2026).id
+      @@admin_id = PartiduoUi::Accounts.create.user.id
+      Partiduo::Api::Modules.activate(SYSTEM, "LIBERAL").value!
+      Partiduo::Api::Liberal.load_defaults(SYSTEM)
+      Partiduo::Api::Liberal.update_settings(SYSTEM, Partiduo::Api::Liberal::SettingsInput.new(
+        profession: "Masseur-kinésithérapeute", default_nature_id: liberal_nature("RECEIPTS").id)).value!
+      Partiduo::Api::Modules.activate(SYSTEM, CODE).value!
+      Partiduo::Api::Modules.deactivate(SYSTEM, "ACCOUNTING").value! unless accounting
+      nil
+    end
+
+    def self.liberal_nature(code : String) : Partiduo::Api::Liberal::NatureView
+      Partiduo::Api::Liberal.natures(SYSTEM).find(&.code.==(code)) || raise "nature #{code} absente"
+    end
+
+    # Ligne du livre-journal de `liberal` (recette ou dépense).
+    def self.liberal_line(kind : String, day : String, amount : String, nature : String) : Nil
+      input = Partiduo::Api::Liberal::LineInput.new(date: Time.parse_utc(day, "%Y-%m-%d"),
+        nature_id: liberal_nature(nature).id, amount: BigDecimal.new(amount), method: "transfer",
+        party_name: "Patient", label: nature.downcase)
+      result = if kind == "receipt"
+                 Partiduo::Api::Liberal.record_receipt(SYSTEM, input)
+               else
+                 Partiduo::Api::Liberal.record_expense(SYSTEM, input)
+               end
+      raise "ligne refusée : #{result.errors.map(&.key).join(", ")}" if result.failure?
+      nil
+    end
+
     def self.connect : Nil
       Api.save_credentials(SYSTEM, Api::CredentialsInput.new(SimulatedTeledec::LOGIN, SimulatedTeledec::API_KEY,
         email: SimulatedTeledec::EMAIL, siret: SimulatedTeledec::SIRET)).value!

@@ -68,6 +68,7 @@ nl:
       no_reason: "Reden niet meegedeeld"
     errors:
       regime: "Elektronische aangiften via TELEDEC gelden voor Franse dossiers."
+      accounting_required: "Deze aangifte vereist de module Boekhouding: zonder die module kan alleen de 2035 van de module Vrij beroep elektronisch worden ingediend."
       kind:
         unknown: "Onbekende soort aangifte."
       fiscal_year:

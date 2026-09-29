@@ -5,6 +5,8 @@ fr:
     fiscal_year: "Exercice"
     no_fiscal_year: "Aucun exercice : créez d'abord un exercice et ses périodes."
     unconfigured: "Choisissez le régime d'imposition et le régime de TVA pour connaître les déclarations attendues."
+    liberal_only: "Sans le module Comptabilité, seule la liasse 2035 est proposée : elle reprend la 2035 préparée par le module Profession libérale (sans balance). La balance, les liasses BIC et IS, la TVA, la DAS2 et les relevés d'IS nécessitent le module Comptabilité."
+    formula_liberal: "Formule API Balance sans balance : Partiduo envoie l'identité de l'entreprise et les cases de la 2035 préparée ; vous les vérifiez sur TELEDEC avant le dépôt."
     answer_yes: "Oui"
     answer_no: "Non"
     transport:
@@ -85,6 +87,8 @@ fr:
       threshold: "Seuil par bénéficiaire"
       confidential: "Comptes confidentiels"
       tax_return_fingerprint: "Empreinte de la 2035 préparée"
+      source: "Source"
+      source_liberal: "2035 du module Profession libérale (sans balance)"
       closing_neutralised: "Écriture de clôture écartée de la balance"
     outcome:
       title: "Dépôt fait hors de Partiduo"

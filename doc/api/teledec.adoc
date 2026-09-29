@@ -18,7 +18,7 @@ D-TDC-001 à D-TDC-028.
 |Permission |Rôle
 
 |`teledec.return.read` |Échéances, dépôts, historique, document, accusé
-|`teledec.return.prepare` |Préparer, contrôler, exporter la balance (exige aussi `accounting.report.read`, ou `accounting.vat.declare` pour la TVA)
+|`teledec.return.prepare` |Préparer, contrôler, exporter la balance (exige aussi `accounting.report.read`, ou `accounting.vat.declare` pour la TVA ; sans la Comptabilité, `liberal.register.read` pour la 2035)
 |`teledec.return.transmit` |Transmettre, actualiser, noter l'issue d'un dépôt fait hors de Partiduo
 |`teledec.settings.manage` |Régime, options, identifiants de l'API
 |===
@@ -31,7 +31,13 @@ D-TDC-001 à D-TDC-028.
   greffe, comptes (préfixe → nature, `DAS2_NATURES`) et seuil de la DAS2,
   environnement, identifiant (`login`, rendu aux seuls titulaires de
   `teledec.settings.manage`, vide sinon), `key_stored`, transport branché.
-* `update_settings(actor, SettingsInput)`.
+* `SettingsView#accounting` (Comptabilité active), `#kinds` (sortes
+  proposées), `#tax_systems` (régimes proposés) : sans la Comptabilité,
+  `false`, `["liasse"]`, `["bnc"]`, et `#tax_system` vaut `bnc` si aucun
+  régime n'est choisi (D-TDC2-001).
+* `update_settings(actor, SettingsInput)` ; sans la Comptabilité, un
+  régime autre que `bnc` est refusé (`tax_system`,
+  `teledec.errors.accounting_required`).
 * `save_credentials(actor, CredentialsInput(login, api_key, env, email, siret, renew_callback_token))` —
   `login` et `api_key` : identifiant et secret du client OAuth2 de TELEDEC,
   chiffrés ; vérifiés par le transport s'il est branché (un jeton est
@@ -112,7 +118,15 @@ D-TDC-001 à D-TDC-028.
   statut, contrôles ; document non relu), `filing(actor, id) : FilingView`,
   `events(actor, id)`.
 * `balance_file(actor, fiscal_year_id)`, `export_file(actor, id)`,
-  `receipt_file(actor, id)`.
+  `receipt_file(actor, id)`. Sans la Comptabilité, `balance_file` lève
+  `Teledec::Api::AccountingRequired` (sous-classe de `ModuleDisabled`,
+  clé `teledec.errors.accounting_required`).
+
+*Libéral sans Comptabilité* (module `liberal` seul, D-TDC2-002) : seule la
+`liasse` d'un régime BNC se prépare, à partir de la 2035 de
+`Liberal.tax_return` (cases, empreinte, `details.source = "liberal"`), sans
+balance ; toute autre sorte échoue sur `teledec.errors.accounting_required`
+(erreur de base), sans lecture de `Partiduo::Api::Accounting`.
 
 `das2` : `year` de 2000 à 2100 (`teledec.errors.year.invalid`).
 

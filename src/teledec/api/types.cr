@@ -216,7 +216,10 @@ module Teledec
     # rappels de TELEDEC, jeton compris) et `callback_url` (adresse complète
     # des rappels sous l'adresse publique de l'instance, en https ; vide si
     # l'hôte de l'instance est inconnu) sont vides pour qui n'a pas
-    # `teledec.settings.manage`.
+    # `teledec.settings.manage`. `accounting` : la Comptabilité est active ;
+    # sinon (module `liberal` seul) `tax_system` est le régime retenu (BNC
+    # si aucun n'est choisi), `kinds` ne propose que la liasse 2035 et
+    # `tax_systems` que le régime BNC (DECISIONS D-TDC2-001).
     record SettingsView,
       tax_system : String,
       vat_system : String,
@@ -232,7 +235,24 @@ module Teledec
       key_stored : Bool,
       checked_at : Time?,
       transport : String?,
-      forms : Array(String)
+      forms : Array(String),
+      accounting : Bool = true,
+      kinds : Array(String) = Config::KINDS,
+      tax_systems : Array(String) = Config::TAX_SYSTEMS
+
+    # Refus d'une lecture qui exige la Comptabilité, inactive (module
+    # `liberal` seul) : le fichier de la balance. Hérite de `ModuleDisabled`
+    # (l'interface répond comme pour un module inactif) ; message traduit
+    # `teledec.errors.accounting_required`.
+    class AccountingRequired < Partiduo::Api::ModuleDisabled
+      def initialize
+        super(Sources::ACCOUNTING)
+      end
+
+      def key : String
+        Sources::ACCOUNTING_REQUIRED
+      end
+    end
 
     # Fichier produit (balance de repli, document JSON, accusé).
     record FileView, filename : String, content_type : String, content : Bytes

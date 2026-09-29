@@ -68,6 +68,7 @@ en:
       no_reason: "Reason not given"
     errors:
       regime: "TELEDEC e-filings apply to French companies."
+      accounting_required: "This return requires the Accounting module: without it, only the 2035 prepared by the Liberal profession module can be e-filed."
       kind:
         unknown: "Unknown return type."
       fiscal_year:

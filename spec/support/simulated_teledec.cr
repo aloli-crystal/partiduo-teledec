@@ -165,12 +165,14 @@ module Teledec
       private def liasse(request : Remote::Request, prefix : String) : Remote::Response
         fields = {} of String => String
         rows = 0
+        zones = false
         request.body.each_line do |line|
           if line.starts_with?('#')
             name, _, value = line.lchop('#').partition(' ')
             fields[name] = value.strip
           elsif line.starts_with?('{')
             (JSON.parse(line) rescue return text(500, "erreur 103 : bloc JSON illisible"))
+            zones = true
           elsif !line.strip.empty?
             cells = line.split(';')
             unless cells.size == 8 && cells[2..].all?(&.matches?(/\A-?\d+(\.\d+)?\z/))
@@ -188,7 +190,9 @@ module Teledec
         siret = fields["SIRET"]?.to_s
         finish = fields["EXERCICE-DATE-FIN"]?.to_s
         return text(500, "erreur technique interne") unless siret.matches?(/\A\d{14}\z/) && finish.matches?(/\A\d{8}\z/)
-        return text(500, "erreur 104 : balance vide") if rows.zero?
+        # Liasse sans balance (2035 d'un libéral sans Comptabilité, D-TDC2-002) :
+        # admise si elle porte des zones de formulaires (supposé, B-TDC-004).
+        return text(500, "erreur 104 : balance vide") if rows.zero? && !zones
         if reason = failure
           return text(500, "erreur 104 : #{reason}")
         end

@@ -34,7 +34,9 @@ contrat : link:doc/api/teledec.adoc[].
 et 2033 ou 2050 (BIC à l'IR), 2035 (BNC), 2072 (SCI). Balance de l'exercice
 avant l'écriture de clôture, balance de l'exercice précédent, identité.
 Aucune case calculée ; pour un BNC tenant le module `liberal`, les cases de
-la 2035 préparée par `Partiduo::Api::Liberal` et son empreinte.
+la 2035 préparée par `Partiduo::Api::Liberal` et son empreinte. Sans la
+Comptabilité (module `liberal` seul) : la 2035 seule, sans balance (voir
+<<liberal-seul>>).
 
 |TVA
 |CA3 et CA12 closes dans la Comptabilité (lot 4), cases reprises en euros
@@ -77,10 +79,33 @@ clé `PARTIDUO_TELEDEC_KEY` ou dérivée de `MARTEN_SECRET_KEY`), jamais
 réaffichés.
 |===
 
+[[liberal-seul]]
+== Libéral sans Comptabilité
+
+Un professionnel libéral qui ne tient que son livre-journal (module
+`liberal`, sans la Comptabilité) télétransmet sa 2035 (DECISIONS D-TDC2-001
+à D-TDC2-005) :
+
+* seule la liasse 2035 est proposée (régime BNC, retenu d'office si aucun
+  régime n'est choisi) ; elle reprend les cases et l'empreinte de la 2035
+  préparée par `Partiduo::Api::Liberal.tax_return`, sans balance, et un
+  contrôle bloquant de cette 2035 bloque la transmission ;
+* la balance (export de repli), les liasses BIC, IS et SCI, la TVA, la DAS2,
+  les relevés d'IS et le greffe sont absents de l'écran et refusés par le
+  contrat (`teledec.errors.accounting_required`, « nécessite le module
+  Comptabilité ») ; aucune lecture de `Partiduo::Api::Accounting` n'a lieu ;
+* droits : `teledec.return.prepare` et `liberal.register.read` (au lieu de
+  `accounting.report.read`).
+
+Avec la Comptabilité, rien ne change : la 2035 joint la balance et, si le
+module `liberal` est actif, ses cases.
+
 == Composition
 
-L'extension dépend du cœur (`partiduo-app`, module `ACCOUNTING` actif) et
-monte son interface Bulma sous `/ext/TELEDEC/` :
+L'extension dépend du cœur (`partiduo-app`) et de la Comptabilité *ou* du
+module `liberal` (`depends_on_any "ACCOUNTING", "LIBERAL"`, ADR-003 D2,
+ADR-007 D4 amendé le 29 septembre 2026), et monte son interface Bulma sous
+`/ext/TELEDEC/` :
 
 [source,crystal]
 ----

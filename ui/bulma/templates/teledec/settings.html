@@ -1,4 +1,4 @@
-{# SPDX-License-Identifier: AGPL-3.0-or-later. Paramètres de TELEDEC (ADR-007 D4) : régime d'imposition (formulaires de la liasse), régime de TVA (CA3, CA12), option du dépôt des comptes au greffe, comptes et seuil de la DAS2 ; identifiants de l'API partenaire (client OAuth2), chiffrés en base et jamais réaffichés, environnement de test ou de production toujours affiché, compte TELEDEC de l'entreprise, SIRET, adresse des rappels de TELEDEC (jeton compris, réservée aux gestionnaires). #}{% extend "ui/base.html" %}
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Paramètres de TELEDEC (ADR-007 D4) : régime d'imposition (formulaires de la liasse), régime de TVA (CA3, CA12), option du dépôt des comptes au greffe, comptes et seuil de la DAS2 ; identifiants de l'API partenaire (client OAuth2), chiffrés en base et jamais réaffichés, environnement de test ou de production toujours affiché, compte TELEDEC de l'entreprise, SIRET, adresse des rappels de TELEDEC (jeton compris, réservée aux gestionnaires). Sans la Comptabilité : régime BNC seul, ni TVA, ni greffe, ni DAS2 (D-TDC2-004). #}{% extend "ui/base.html" %}
 {% block title %}{{ title }}{% endblock title %}
 {% block crumbs %}{% include "ui/_crumbs.html" %}{% endblock crumbs %}
 {% block heading %}{{ title }} <span class="pd-ext">TELEDEC</span>{% endblock heading %}
@@ -12,7 +12,7 @@
       <div class="field"><label class="label" for="pd-teledec-tax-system">{% translate "teledec_ui.settings.tax_system" %}</label>
         <div class="select"><select id="pd-teledec-tax-system" name="tax_system"{% if errors.tax_system %} aria-invalid="true"{% endif %}><option value="">{% translate "teledec_ui.settings.unset" %}</option>{% for option in tax_systems %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
         {% if errors.tax_system %}<p class="help is-danger">{{ errors.tax_system }}</p>{% endif %}</div>
-      <div class="field"><label class="label" for="pd-teledec-vat-system">{% translate "teledec_ui.settings.vat_system" %}</label>
+      {% if accounting %}<div class="field"><label class="label" for="pd-teledec-vat-system">{% translate "teledec_ui.settings.vat_system" %}</label>
         <div class="select"><select id="pd-teledec-vat-system" name="vat_system"><option value="">{% translate "teledec_ui.settings.unset" %}</option>{% for option in vat_systems %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
         {% if errors.vat_system %}<p class="help is-danger">{{ errors.vat_system }}</p>{% endif %}</div>
       <div class="field"><label class="checkbox"><input type="checkbox" name="greffe" value="1"{% if settings.greffe %} checked{% endif %}> {% translate "teledec_ui.settings.greffe" %}</label></div>
@@ -20,7 +20,7 @@
         {% if errors.das2_threshold %}<p class="help is-danger">{{ errors.das2_threshold }}</p>{% endif %}</div>
       <div class="field"><label class="label" for="pd-teledec-das2-accounts">{% translate "teledec_ui.settings.das2_accounts" %}</label><textarea class="textarea pd-mono" id="pd-teledec-das2-accounts" name="das2_accounts" rows="4"{% if errors.das2_accounts %} aria-invalid="true"{% endif %}>{{ settings.das2_accounts }}</textarea>
         <p class="help">{% translate "teledec_ui.settings.das2_help" %} {{ natures }}.</p>
-        {% if errors.das2_accounts %}<p class="help is-danger">{{ errors.das2_accounts }}</p>{% endif %}</div>
+        {% if errors.das2_accounts %}<p class="help is-danger">{{ errors.das2_accounts }}</p>{% endif %}</div>{% else %}<p class="help mb-3" data-teledec-liberal-only>{% translate "teledec_ui.liberal_only" %}</p>{% endif %}
       <button class="button is-primary pd-touch" type="submit">{% translate "ui.forms.save" %}</button>
     </form>
   </div>

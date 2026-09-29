@@ -5,6 +5,8 @@ nl:
     fiscal_year: "Boekjaar"
     no_fiscal_year: "Geen boekjaar: maak eerst een boekjaar en zijn periodes aan."
     unconfigured: "Kies het belastingstelsel en het btw-stelsel om de verwachte aangiften te zien."
+    liberal_only: "Zonder de module Boekhouding wordt alleen de aangifte 2035 aangeboden: die neemt de 2035 over die de module Vrij beroep voorbereidt (zonder proef- en saldibalans). De proef- en saldibalans, de BIC- en vennootschapsbelastingaangiften, de btw, de DAS2 en de vennootschapsbelastingstaten vereisen de module Boekhouding."
+    formula_liberal: "Formule API Balance zonder proef- en saldibalans: Partiduo verzendt de identiteit van de onderneming en de vakken van de voorbereide 2035; u controleert ze op TELEDEC vóór de indiening."
     answer_yes: "Ja"
     answer_no: "Nee"
     transport:
@@ -85,6 +87,8 @@ nl:
       threshold: "Drempel per begunstigde"
       confidential: "Vertrouwelijke jaarrekening"
       tax_return_fingerprint: "Vingerafdruk van de voorbereide 2035"
+      source: "Bron"
+      source_liberal: "2035 van de module Vrij beroep (zonder proef- en saldibalans)"
       closing_neutralised: "Afsluitingsboeking buiten de balans gelaten"
     outcome:
       title: "Buiten Partiduo ingediend"

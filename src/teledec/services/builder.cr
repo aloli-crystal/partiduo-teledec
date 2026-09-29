@@ -7,6 +7,9 @@ module Teledec
   # déclarations préparées ailleurs (TVA du lot 4, 2035 du module
   # `liberal`). Toutes les lectures passent par `Partiduo::Api` avec
   # l'acteur système, après le contrôle des droits par `Teledec::Api`.
+  # Sans la Comptabilité, seule la liasse 2035 est construite, à partir de
+  # la 2035 de `liberal` ; toute autre sorte est refusée avant la moindre
+  # lecture de la Comptabilité (`Sources`, DECISIONS D-TDC2-002).
   module Builder
     alias FieldError = Partiduo::Api::FieldError
     alias ControlView = Api::ControlView
@@ -46,6 +49,11 @@ module Teledec
     def self.build(input : Api::PrepareInput, settings : Settings) : Partiduo::Api::Result(Built)
       failure = ->(field : String, key : String) { Partiduo::Api::Result(Built).failure(FieldError.new(field, key)) }
       return failure.call("kind", "teledec.errors.kind.unknown") unless Config::KINDS.includes?(input.kind)
+      accounting = Sources.accounting?
+      tax_system = Sources.tax_system(settings, accounting)
+      if !accounting && Sources.needs_accounting?(input.kind, tax_system)
+        return failure.call(FieldError::BASE, Sources::ACCOUNTING_REQUIRED)
+      end
       company = Core.settings(system)
       return failure.call(FieldError::BASE, "teledec.errors.regime") unless company.tax_regime == "fr"
 
@@ -57,25 +65,25 @@ module Teledec
       else
         fiscal_year = input.fiscal_year_id.try { |id| find_fiscal_year(id) }
         return failure.call("fiscal_year_id", "teledec.errors.fiscal_year.unknown") if fiscal_year.nil? || fiscal_year.starts_on.nil? || fiscal_year.ends_on.nil?
-        yearly(input, company, settings, fiscal_year)
+        yearly(input, company, settings, fiscal_year, tax_system, accounting)
       end
     end
 
     # --- Liasse, greffe, IS --------------------------------------------------
 
-    private def self.yearly(input, company, settings, fiscal_year) : Partiduo::Api::Result(Built)
-      if invalid = yearly_error(input, settings)
+    private def self.yearly(input, company, settings, fiscal_year, tax_system, accounting) : Partiduo::Api::Result(Built)
+      if invalid = yearly_error(input, settings, tax_system)
         return Partiduo::Api::Result(Built).failure(invalid)
       end
-      tax_system = settings.tax_system.to_s
       starts_on = fiscal_year.starts_on.as(Time)
       ends_on = fiscal_year.ends_on.as(Time)
       controls = identity_controls(company)
       number = input.kind == "is_2571" ? input.number : 0
       content = case input.kind
-                when "liasse", "greffe" then balance_content(input, tax_system, fiscal_year, controls)
-                when "is_2572"          then corporate_tax_balance_content(input, fiscal_year, controls)
-                else                         corporate_tax_advance_content(input, controls)
+                when "liasse", "greffe"
+                  accounting ? balance_content(input, tax_system, fiscal_year, controls) : liberal_content(fiscal_year, controls)
+                when "is_2572" then corporate_tax_balance_content(input, fiscal_year, controls)
+                else                corporate_tax_advance_content(input, controls)
                 end
       balance, previous, boxes, details = content
       key = input.kind == "is_2571" ? "is_2571:#{fiscal_year.id}:#{number}" : "#{input.kind}:#{fiscal_year.id}"
@@ -89,8 +97,7 @@ module Teledec
     alias Content = {Array(Payload::BalanceRow)?, Array(Payload::BalanceRow)?, Hash(String, Hash(String, String))?, Hash(String, String)}
 
     # Règles de saisie de la liasse, du greffe et des relevés d'IS.
-    private def self.yearly_error(input : Api::PrepareInput, settings : Settings) : FieldError?
-      tax_system = settings.tax_system.to_s
+    private def self.yearly_error(input : Api::PrepareInput, settings : Settings, tax_system : String) : FieldError?
       return FieldError.base("teledec.errors.settings.tax_system") if input.kind != "greffe" && tax_system.empty?
       if input.kind.starts_with?("is_") && !Config::CORPORATE_TAX_SYSTEMS.includes?(tax_system)
         return FieldError.base("teledec.errors.corporate_tax.not_applicable")
@@ -125,10 +132,19 @@ module Teledec
       details["closing_neutralised"] = "1" if computed.closing_neutralised
       details["confidential"] = input.confidential ? "1" : "0" if input.kind == "greffe"
       boxes = nil
-      if input.kind == "liasse" && tax_system == "bnc" && liberal_active?
+      if input.kind == "liasse" && tax_system == "bnc" && Sources.liberal?
         boxes = liberal_boxes(fiscal_year.ends_on.as(Time).year, controls, details)
       end
       {balance, previous, boxes, details}
+    end
+
+    # Liasse 2035 sans la Comptabilité (DECISIONS D-TDC2-002) : aucune
+    # balance, les cases de la 2035 préparée par `liberal` seules.
+    private def self.liberal_content(fiscal_year, controls) : Content
+      controls << warning("teledec.controls.fiscal_year_open") unless fiscal_year.closed?
+      details = {"source" => "liberal"}
+      boxes = liberal_boxes(fiscal_year.ends_on.as(Time).year, controls, details)
+      {nil, nil, boxes, details}
     end
 
     # Relevé de solde d'IS : impôt de l'exercice (saisi, sinon solde du
@@ -154,12 +170,6 @@ module Teledec
       controls << error("teledec.controls.liberal_not_ready", {"count" => prepared.controls.count(&.error?).to_s}) unless prepared.ready?
       details["tax_return_fingerprint"] = prepared.fingerprint
       prepared.boxes.transform_values { |boxes| boxes.transform_values { |amount| Money.euros_text(amount) } }
-    end
-
-    def self.liberal_active? : Bool
-      Partiduo::Api::Modules.get(system, "LIBERAL").active
-    rescue Partiduo::Api::NotFound
-      false
     end
 
     # --- TVA -----------------------------------------------------------------

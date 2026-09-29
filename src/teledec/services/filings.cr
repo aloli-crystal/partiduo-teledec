@@ -234,11 +234,15 @@ module Teledec
 
     # --- Échéances -------------------------------------------------------------
 
+    # Échéances de l'exercice. Sans la Comptabilité, la liasse 2035 seule
+    # (régime BNC), sans lecture des déclarations de TVA de la Comptabilité
+    # (DECISIONS D-TDC2-003).
     def self.schedule(fiscal_year : Partiduo::Api::Core::FiscalYearView) : Array(Api::DeadlineView)
       starts_on = fiscal_year.starts_on || return [] of Api::DeadlineView
       ends_on = fiscal_year.ends_on || starts_on
       settings = self.settings
-      tax_system = settings.tax_system.to_s
+      accounting = Sources.accounting?
+      tax_system = Sources.tax_system(settings, accounting)
       filings = Filing.filter(fiscal_year_id: fiscal_year.id).to_a.index_by(&.key.to_s)
       filings.merge!(Filing.filter(key: "das2:#{ends_on.year}").to_a.index_by(&.key.to_s))
       deadlines = [] of Api::DeadlineView
@@ -248,7 +252,10 @@ module Teledec
           kind == "das2" ? to.year : ends_on.year, number, from, to, due, vat_id, filing.try(&.id!.to_i64), filing.try(&.status))
         nil
       end
-      add.call("liasse:#{fiscal_year.id}", "liasse", 0, starts_on, ends_on, Calendar.liasse(ends_on), nil)
+      if accounting || !Sources.needs_accounting?("liasse", tax_system)
+        add.call("liasse:#{fiscal_year.id}", "liasse", 0, starts_on, ends_on, Calendar.liasse(ends_on), nil)
+      end
+      return deadlines unless accounting
       if Config::CORPORATE_TAX_SYSTEMS.includes?(tax_system)
         Calendar.corporate_tax_advances(starts_on, ends_on).each_with_index(1) do |due, number|
           add.call("is_2571:#{fiscal_year.id}:#{number}", "is_2571", number, starts_on, ends_on, due, nil)

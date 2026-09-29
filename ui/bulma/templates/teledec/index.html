@@ -1,10 +1,11 @@
-{# SPDX-License-Identifier: AGPL-3.0-or-later. Écran « Télédéclarations » (ADR-007 D4) : exercice choisi, échéances de l'exercice (déclaration, formulaires, période, date limite, statut du dépôt), préparation d'une déclaration depuis son échéance, dépôts de l'exercice, export de la balance au format d'import (repli tant que la transmission directe n'est pas branchée, ADR-007 D5). #}{% extend "ui/base.html" %}
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Écran « Télédéclarations » (ADR-007 D4) : exercice choisi, échéances de l'exercice (déclaration, formulaires, période, date limite, statut du dépôt), préparation d'une déclaration depuis son échéance, dépôts de l'exercice, export de la balance au format d'import (repli tant que la transmission directe n'est pas branchée, ADR-007 D5). Sans la Comptabilité (module liberal seul) : avis, liasse 2035 seule, ni régime de TVA ni export de la balance (D-TDC2-004). #}{% extend "ui/base.html" %}
 {% block title %}{{ title }}{% endblock title %}
 {% block crumbs %}{% include "ui/_crumbs.html" %}{% endblock crumbs %}
 {% block heading %}{{ title }} <span class="pd-ext">TELEDEC</span>{% endblock heading %}
 {% block content %}
 {% if transport %}<div class="notification is-info is-light pd-alert" role="status" data-teledec-transport="available">{% include "ui/_icon.html" with name="file-text" %}<div><p>{% translate "teledec_ui.transport.available" name: transport %}</p></div></div>
-{% else %}<div class="notification is-warning is-light pd-alert" role="status" data-teledec-transport="unavailable">{% include "ui/_icon.html" with name="triangle-alert" %}<div><p>{% translate "teledec_ui.transport.unavailable" %}</p>{% if fiscal_year %}{% if can_prepare %}<p class="mt-2"><a class="button is-small pd-touch" href="{{ fiscal_year.balance_url }}" data-teledec-balance>{% include "ui/_icon.html" with name="download" %}<span>{% translate "teledec_ui.actions.balance" %}</span></a></p>{% endif %}{% endif %}</div></div>{% endif %}
+{% else %}<div class="notification is-warning is-light pd-alert" role="status" data-teledec-transport="unavailable">{% include "ui/_icon.html" with name="triangle-alert" %}<div><p>{% translate "teledec_ui.transport.unavailable" %}</p>{% if fiscal_year.balance_url %}{% if can_prepare %}<p class="mt-2"><a class="button is-small pd-touch" href="{{ fiscal_year.balance_url }}" data-teledec-balance>{% include "ui/_icon.html" with name="download" %}<span>{% translate "teledec_ui.actions.balance" %}</span></a></p>{% endif %}{% endif %}</div></div>{% endif %}
+{% if not accounting %}<div class="notification is-info is-light pd-alert" role="status" data-teledec-liberal-only>{% include "ui/_icon.html" with name="file-text" %}<div><p>{% translate "teledec_ui.liberal_only" %}</p></div></div>{% endif %}
 {% if unconfigured %}<div class="notification is-light pd-alert" role="status" data-teledec-unconfigured>{% include "ui/_icon.html" with name="settings" %}<div><p>{% translate "teledec_ui.unconfigured" %}</p>{% if can_settings %}<p class="mt-2"><a href="{{ settings_url }}">{% translate "teledec_ui.settings.title" %}</a></p>{% endif %}</div></div>{% endif %}
 
 <section class="pd-panel" aria-labelledby="pd-teledec-year">
@@ -16,7 +17,7 @@
     </form>
     <dl class="pd-dl mt-3">
       <dt>{% translate "teledec_ui.settings.tax_system" %}</dt><dd>{% if tax_system %}{{ tax_system }}{% else %}—{% endif %}</dd>
-      <dt>{% translate "teledec_ui.settings.vat_system" %}</dt><dd>{% if vat_system %}{{ vat_system }}{% else %}—{% endif %}</dd>
+      {% if accounting %}<dt>{% translate "teledec_ui.settings.vat_system" %}</dt><dd>{% if vat_system %}{{ vat_system }}{% else %}—{% endif %}</dd>{% endif %}
     </dl>
     {% else %}<p class="pd-muted">{% translate "teledec_ui.no_fiscal_year" %}</p>{% endif %}
   </div>
@@ -59,5 +60,5 @@
   {% else %}<div class="pd-body"><p class="pd-muted">{% translate "teledec_ui.filings.none" %}</p></div>{% endif %}
 </section>
 {% endif %}
-<p class="help">{% translate "teledec_ui.formula" %}</p>
+<p class="help">{{ formula }}</p>
 {% endblock content %}

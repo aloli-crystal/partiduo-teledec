@@ -5,6 +5,8 @@ en:
     fiscal_year: "Financial year"
     no_fiscal_year: "No financial year: first create a financial year and its periods."
     unconfigured: "Choose the tax system and the VAT system to see the expected returns."
+    liberal_only: "Without the Accounting module, only the 2035 return is offered: it takes the 2035 prepared by the Liberal profession module (no trial balance). The trial balance, BIC and corporate tax returns, VAT, DAS2 and corporate tax statements require the Accounting module."
+    formula_liberal: "API Balance formula without a trial balance: Partiduo sends the company identity and the boxes of the prepared 2035; you check them on TELEDEC before filing."
     answer_yes: "Yes"
     answer_no: "No"
     transport:
@@ -85,6 +87,8 @@ en:
       threshold: "Threshold per beneficiary"
       confidential: "Confidential accounts"
       tax_return_fingerprint: "Fingerprint of the prepared 2035"
+      source: "Source"
+      source_liberal: "2035 from the Liberal profession module (no trial balance)"
       closing_neutralised: "Closing entry left out of the trial balance"
     outcome:
       title: "Filed outside Partiduo"

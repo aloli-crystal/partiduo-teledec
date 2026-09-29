@@ -168,6 +168,9 @@ module Teledec
                   value = I18n.t(value == "1" ? "teledec_ui.answer_yes" : "teledec_ui.answer_no")
                   I18n.t("teledec_ui.details.confidential")
                 when "tax_return_fingerprint" then I18n.t("teledec_ui.details.tax_return_fingerprint")
+                when "source"
+                  value = I18n.t("teledec_ui.details.source_#{value}")
+                  I18n.t("teledec_ui.details.source")
                 when "closing_neutralised"
                   value = I18n.t("teledec_ui.answer_yes")
                   I18n.t("teledec_ui.details.closing_neutralised")

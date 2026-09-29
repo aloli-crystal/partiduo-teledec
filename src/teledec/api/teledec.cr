@@ -55,6 +55,11 @@ module Teledec
       unless input.tax_system.empty? || TAX_SYSTEMS.includes?(input.tax_system)
         errors << FieldError.new("tax_system", "teledec.errors.settings.tax_system_unknown")
       end
+      # Sans la Comptabilité, seul le régime BNC (2035 de `liberal`) se
+      # télédéclare (DECISIONS D-TDC2-001).
+      if errors.empty? && !input.tax_system.empty? && !Sources.tax_systems.includes?(input.tax_system)
+        errors << FieldError.new("tax_system", Sources::ACCOUNTING_REQUIRED)
+      end
       unless input.vat_system.empty? || VAT_SYSTEMS.includes?(input.vat_system)
         errors << FieldError.new("vat_system", "teledec.errors.settings.vat_system_unknown")
       end
@@ -180,7 +185,9 @@ module Teledec
 
     # Prépare (ou prépare de nouveau) une déclaration : document, contrôles,
     # échéance. Exige aussi le droit de lire les éditions de la Comptabilité
-    # (et de déclarer la TVA pour CA3 et CA12).
+    # (et de déclarer la TVA pour CA3 et CA12) ; sans la Comptabilité, le
+    # droit de lire le livre-journal de `liberal` pour la 2035, et toute
+    # autre sorte est refusée (`teledec.errors.accounting_required`).
     def self.prepare(actor : Actor, input : PrepareInput) : Result(FilingView)
       Guard.authorize!(actor, PREPARE, module_code: MODULE_CODE)
       authorize_sources!(actor, input.kind)
@@ -406,8 +413,10 @@ module Teledec
     # --- Fichiers ----------------------------------------------------------------
 
     # Balance de l'exercice au format d'import courant (repli, ADR-007 D5).
+    # `AccountingRequired` sans la Comptabilité.
     def self.balance_file(actor : Actor, fiscal_year_id : Int64) : FileView
       Guard.authorize!(actor, PREPARE, module_code: MODULE_CODE)
+      raise AccountingRequired.new unless Sources.accounting?
       authorize_sources!(actor, "liasse")
       fiscal_year = Builder.find_fiscal_year(fiscal_year_id) || raise Partiduo::Api::NotFound.new("fiscal_year", fiscal_year_id)
       ends_on = fiscal_year.ends_on
@@ -447,7 +456,15 @@ module Teledec
       Filing.filter(id: id).first || raise Partiduo::Api::NotFound.new("teledec_filing", id)
     end
 
+    # Droits sur les sources de la déclaration. Sans la Comptabilité, aucune
+    # garde de la Comptabilité n'est citée : la liasse (2035) exige la
+    # lecture du livre-journal de `liberal`, les autres sortes sont
+    # refusées ensuite par `Builder` (`teledec.errors.accounting_required`).
     private def self.authorize_sources!(actor : Actor, kind : String) : Nil
+      unless Sources.accounting?
+        Guard.authorize!(actor, "liberal.register.read", module_code: Sources::LIBERAL) if kind == "liasse"
+        return
+      end
       if kind.starts_with?("vat_")
         Guard.authorize!(actor, "accounting.vat.declare", module_code: "ACCOUNTING")
       else
@@ -503,8 +520,10 @@ module Teledec
     end
 
     private def self.settings_view(settings : Settings, manager : Bool) : SettingsView
+      accounting = Sources.accounting?
+      tax_system = Sources.tax_system(settings, accounting)
       SettingsView.new(
-        tax_system: settings.tax_system.to_s,
+        tax_system: tax_system,
         vat_system: settings.vat_system.to_s,
         greffe: settings.greffe || false,
         das2_accounts: Filings.das2_accounts(settings),
@@ -518,7 +537,10 @@ module Teledec
         key_stored: !settings.api_key.to_s.empty?,
         checked_at: settings.checked_at,
         transport: Transports.current.try(&.name),
-        forms: Config::FORMS[settings.tax_system.to_s]? || [] of String,
+        forms: Config::FORMS[tax_system]? || [] of String,
+        accounting: accounting,
+        kinds: Sources.kinds(tax_system, accounting),
+        tax_systems: Sources.tax_systems(accounting),
       )
     end
   end

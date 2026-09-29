@@ -5,6 +5,8 @@ module Teledec
     # `/ext/TELEDEC/settings` : régime d'imposition (formulaires de la
     # liasse), régime de TVA, dépôt des comptes au greffe, comptes et seuil
     # de la DAS2, identifiants de l'API (la clé n'est jamais réaffichée).
+    # Sans la Comptabilité : le régime BNC seul, sans TVA, greffe ni DAS2
+    # (valeurs enregistrées gardées, DECISIONS D-TDC2-004).
     class SettingsHandler < Handler
       def get
         require_settings!
@@ -13,10 +15,16 @@ module Teledec
 
       def post
         require_settings!
-        accounts = parse_accounts(field("das2_accounts", strip: false))
-        threshold = field("das2_threshold").presence.try { |text| fmt.parse_decimal(text) }
-        input = Api::SettingsInput.new(tax_system: field("tax_system"), vat_system: field("vat_system"),
-          greffe: field("greffe") == "1", das2_accounts: accounts, das2_threshold: threshold)
+        stored = Api.settings(current.actor)
+        input = if stored.accounting
+                  accounts = parse_accounts(field("das2_accounts", strip: false))
+                  threshold = field("das2_threshold").presence.try { |text| fmt.parse_decimal(text) }
+                  Api::SettingsInput.new(tax_system: field("tax_system"), vat_system: field("vat_system"),
+                    greffe: field("greffe") == "1", das2_accounts: accounts, das2_threshold: threshold)
+                else
+                  Api::SettingsInput.new(tax_system: field("tax_system"), vat_system: stored.vat_system,
+                    greffe: stored.greffe)
+                end
         result = Api.update_settings(current.actor, input)
         if result.success?
           flash["success"] = I18n.t("teledec_ui.flash.settings")
@@ -33,7 +41,8 @@ module Teledec
         page("teledec/settings.html", {
           "title"        => I18n.t("teledec_ui.settings.title"),
           "crumbs"       => [crumb("core.menu.settings"), PartiduoUi::Screen::Crumb.new(I18n.t("teledec_ui.settings.title"))],
-          "tax_systems"  => options.call(Api::TAX_SYSTEMS, "teledec.tax_systems", view.tax_system),
+          "tax_systems"  => options.call(view.tax_systems, "teledec.tax_systems", view.tax_system),
+          "accounting"   => view.accounting ? "1" : nil,
           "vat_systems"  => options.call(Api::VAT_SYSTEMS, "teledec.vat_systems", view.vat_system),
           "environments" => options.call(Api::ENVIRONMENTS, "teledec.environments", view.env),
           "natures"      => Api::DAS2_NATURES.map { |code| "#{code} (#{I18n.t("teledec.das2_natures.#{code}")})" }.join(", "),

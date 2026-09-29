@@ -4,7 +4,9 @@ module Teledec
   module Ui
     # `/ext/TELEDEC/` : écran « Télédéclarations » d'un exercice — échéances
     # (déclaration, période, date limite, statut), préparation, dépôts de
-    # l'exercice, export de la balance en repli.
+    # l'exercice, export de la balance en repli. Sans la Comptabilité
+    # (module `liberal` seul) : la liasse 2035 seule, ni régime de TVA ni
+    # export de la balance, et un avis qui le dit (DECISIONS D-TDC2-004).
     class IndexHandler < Handler
       def get
         actor = current.actor
@@ -14,16 +16,19 @@ module Teledec
         deadlines = selected ? Api.schedule(actor, selected.id) : [] of Api::DeadlineView
         filings = selected ? Api.filings(actor, selected.id) : [] of Api::FilingSummaryView
         settings = Api.settings(actor)
+        accounting = settings.accounting
         page("teledec/index.html", {
           "title"        => I18n.t("teledec_ui.title"),
           "crumbs"       => crumbs,
           "years"        => years.map { |year| Ui.row({"id" => year.id.to_s, "label" => year.label, "selected" => year.id == selected.try(&.id) ? "1" : nil}) },
-          "fiscal_year"  => selected.try { |year| Ui.row({"id" => year.id.to_s, "label" => year.label, "balance_url" => Ui.url("balance", fiscal_year_id: year.id)}) },
+          "fiscal_year"  => selected.try { |year| Ui.row({"id" => year.id.to_s, "label" => year.label, "balance_url" => accounting ? Ui.url("balance", fiscal_year_id: year.id) : nil}) },
           "deadlines"    => listed(deadlines.map { |item| Present.deadline(item, fmt, today) }),
           "filings"      => listed(filings.map { |item| Present.filing_summary(item, fmt) }),
           "transport"    => settings.transport,
           "tax_system"   => settings.tax_system.presence.try { |code| I18n.t("teledec.tax_systems.#{code}") },
           "vat_system"   => settings.vat_system.presence.try { |code| I18n.t("teledec.vat_systems.#{code}") },
+          "accounting"   => accounting ? "1" : nil,
+          "formula"      => I18n.t(accounting ? "teledec_ui.formula" : "teledec_ui.formula_liberal"),
           "can_prepare"  => can?(Api::PREPARE) ? "1" : nil,
           "can_transmit" => can?(Api::TRANSMIT) ? "1" : nil,
           "can_settings" => can?(Api::SETTINGS) ? "1" : nil,
