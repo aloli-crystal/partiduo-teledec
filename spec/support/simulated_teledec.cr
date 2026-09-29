@@ -12,23 +12,30 @@ module Teledec
   # reconnue, URL rendue), marque blanche (horodatage de moins d'une heure,
   # lien rendu), suivi (`declaration-status`, comptes-rendus, 404 sans
   # déclaration, email inconnu), création d'entreprise (mot de passe bcrypt)
-  # et corps des rappels. Aucun appel réseau.
+  # et corps des rappels. Aucun appel réseau. Domaine des comptes en marque
+  # blanche : `partiduo.test` (fictif, jamais résolu).
   class SimulatedTeledec < HttpTransport
     LOGIN   = "cabinet-test"
     API_KEY = "cle-de-test-0123456789"
-    # Compte TELEDEC et SIRET de l'entreprise des specs (SIREN 732 829 320).
-    EMAIL = "compta@atelier-brunet.test"
-    SIRET = "73282932000074"
+    # Email de contact et SIRET de l'entreprise des specs (SIREN
+    # 732 829 320) ; domaine fictif des comptes en marque blanche et compte
+    # de l'entreprise des specs chez TELEDEC.
+    EMAIL       = "compta@atelier-brunet.test"
+    SIRET       = "73282932000074"
+    USER_DOMAIN = "partiduo.test"
+    ACCOUNT     = "teledec-732829320@partiduo.test"
 
     getter server : Server
 
-    def initialize(server : Server = Server.new)
+    def initialize(server : Server = Server.new, user_domain : String? = USER_DOMAIN)
       @server = server
-      super(server, name: "TELEDEC simulé", source: Server::SOURCE)
+      super(server, name: "TELEDEC simulé", source: Server::SOURCE, user_domain: user_domain)
+      # Sans domaine demandé, aucun : l'adaptateur doit refuser.
+      @user_domain = nil if user_domain.nil?
     end
 
     delegate deposits, failure, acknowledge, reject, reject_with_errors, callback_body, expire_tokens!,
-      token_requests, requests, to: @server
+      token_requests, requests, accounts, to: @server
 
     def failure=(reason : String?) : String?
       @server.failure = reason
@@ -40,7 +47,7 @@ module Teledec
 
     # Serveur simulé : reçoit les requêtes de l'adaptateur.
     class Server < Remote::Exchange
-      SOURCE = "PARTIDUO"
+      SOURCE = "API"
       BASE   = {"stage.teledec.fr" => "stage", "www.teledec.fr" => "prod"}
       PDF    = "%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n"
 
@@ -73,6 +80,8 @@ module Teledec
       getter deposits = {} of String => Deposit
       getter requests = [] of Remote::Request
       getter token_requests = 0
+      # Comptes d'entreprise créés (adresse → haché bcrypt du mot de passe).
+      getter accounts = {} of String => String
       # Motif de refus programmé de la prochaine déclaration.
       property failure : String? = nil
       # `false` : le suivi ne joint pas les comptes-rendus (l'adaptateur les
@@ -190,6 +199,10 @@ module Teledec
         siret = fields["SIRET"]?.to_s
         finish = fields["EXERCICE-DATE-FIN"]?.to_s
         return text(500, "erreur technique interne") unless siret.matches?(/\A\d{14}\z/) && finish.matches?(/\A\d{8}\z/)
+        if password = fields["MOT-DE-PASSE"]?
+          return text(500, "erreur 101 : mot de passe non chiffré") unless password.starts_with?("$2")
+          accounts[email] = password
+        end
         # Liasse sans balance (2035 d'un libéral sans Comptabilité, D-TDC2-002) :
         # admise si elle porte des zones de formulaires (supposé, B-TDC-004).
         return text(500, "erreur 104 : balance vide") if rows.zero? && !zones
@@ -214,6 +227,9 @@ module Teledec
         period = document["period"]?.try(&.as_h?) || return json(400, {"message" => "period absent"})
         form = (Remote::Formats::FORM_KEYS.values - ["liasse"]).find { |name| document.has_key?(name) } ||
                return json(400, {"message" => "formulaire absent"})
+        if form == "DAS2" && (invalid = das2_invalid(document["DAS2"]))
+          return json(400, {"message" => invalid})
+        end
         return json(400, {"message" => failure.to_s}) if failure
         siren = identity["siret"]?.try(&.as_s?).to_s[0, 9]
         finish = period["end"]?.try(&.as_s?).to_s
@@ -256,10 +272,25 @@ module Teledec
         unless auth["password"]?.try(&.as_s?).to_s.starts_with?("$2")
           return text(400, "Password du compte absent ou format d'encryption différent de celui attendu")
         end
+        accounts[auth["email"]?.try(&.as_s?).to_s] = auth["password"].as_s
         text(200, "Entreprise créée ou mise à jour et rattachée à l'utilisateur #{auth["email"]?}")
       end
 
       # --- Outils -----------------------------------------------------------------
+
+      # DAS2 : un objet `repetitionDAS2TV` par bénéficiaire, natures dans
+      # `repetitionDAS2MontantSommesVersees` (réponses de TELEDEC du
+      # 29 septembre 2026) ; `nil` si la forme est bonne.
+      private def das2_invalid(block : JSON::Any) : String?
+        items = block["repetitionDAS2TV"]?.try(&.as_a?) || return "repetitionDAS2TV absent"
+        items.each do |item|
+          amounts = item["repetitionDAS2MontantSommesVersees"]?.try(&.as_a?)
+          return "repetitionDAS2MontantSommesVersees absent" if amounts.nil? || amounts.empty?
+          return "nature ou montant absent" unless amounts.all? { |amount| amount["CA"]? && amount["BA"]? }
+          return "CA hors de repetitionDAS2MontantSommesVersees" if item["CA"]?
+        end
+        nil
+      end
 
       private def store(remote_id : String, form : String, reference : String, body : String, prefix : String,
                         email : String, status : String, callback_url : String?) : Deposit
@@ -288,16 +319,28 @@ module Teledec
           "declarationId"     => JSON::Any.new(deposit.declaration_id),
           "reference"         => JSON::Any.new(deposit.reference),
           "siren"             => JSON::Any.new(parts[1]),
-          "declarationType"   => JSON::Any.new(deposit.form == "liasse" ? "Liasse" : "TVA"),
+          "declarationType"   => JSON::Any.new(declaration_type(deposit.form)),
           "formulaire"        => JSON::Any.new(deposit.form),
           "dateFin"           => JSON::Any.new(parts[2]),
           "status"            => JSON::Any.new(status),
+          "declarationStatus" => JSON::Any.new(status),
           "statusLibelle"     => JSON::Any.new(status == "OK" ? "Déclaration acceptée" : "Déclaration rejetée"),
           "formulairesStatus" => JSON::Any.new(forms_status),
           "dateHeureDGFiP"    => JSON::Any.new("2027-05-10T02:00:00"),
           "referenceDGFiP"    => JSON::Any.new("DGFIP-#{deposit.declaration_id}"),
         }
         report.merge(extra)
+      end
+
+      # Type de rappel d'un formulaire (réponses de TELEDEC du 29 septembre
+      # 2026) : DAS2 `Part`, relevés d'IS `Paiement`.
+      private def declaration_type(form : String) : String
+        case form
+        when "liasse"       then "Liasse"
+        when "DAS2"         then "Part"
+        when "2571", "2572" then "Paiement"
+        else                     "TVA"
+        end
       end
 
       private def text(status : Int32, body : String) : Remote::Response

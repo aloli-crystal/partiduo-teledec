@@ -7,14 +7,17 @@ module Teledec
   module Remote
     # Traduction du document neutre (`Teledec::Payload`) dans les formats de
     # l'API partenaire de TELEDEC, et lecture de ses réponses. Sources :
-    # synthèse de l'API relevée sur le portail partenaires et spécifications
-    # JSON des formulaires (codes par millésime) ; ce qui reste incertain est
+    # synthèse de l'API relevée sur le portail partenaires, spécifications
+    # JSON des formulaires (codes par millésime) et réponses de TELEDEC du
+    # 29 septembre 2026 (DECISIONS D-TDC3-*) ; ce qui reste incertain est
     # consigné dans BLOCAGES (B-TDC-004).
     #
     # * Liasse : API Balance (`POST /service/liasse`), texte en trois
-    #   sections — identification `#CLE valeur`, balance
-    #   `compte;libellé;ouv. débit;ouv. crédit;mvt débit;mvt crédit;solde
-    #   débit;solde crédit`, bloc JSON facultatif (`zones_formulaires`).
+    #   sections — identification `#CLE valeur` (compte de l'entreprise :
+    #   `#EMAIL`, `#MOT-DE-PASSE` bcrypt), balance `compte;libellé;ouv.
+    #   débit;ouv. crédit;mvt débit;mvt crédit;solde débit;solde crédit`,
+    #   bloc JSON facultatif (`zones_formulaires`, clés = code de la case
+    #   seul, sauf 2065 et 2031 : `HA_2065`).
     # * TVA, DAS2, IS : API marque blanche
     #   (`POST /service/declaration-marque-blanche`), JSON `auth`,
     #   `identity`, `period` et un bloc par formulaire en clés/valeurs.
@@ -31,14 +34,19 @@ module Teledec
       }
 
       # Cases de la CA3 de Partiduo (lignes du 3310-CA3) → codes TELEDEC du
-      # formulaire `3310CA3`, par premier millésime d'application. La
-      # ligne 14 (taux particuliers) se détaille sur l'annexe 3310-A, que
-      # Partiduo prépare taux par taux (D-R5-006) mais dont les codes
-      # TELEDEC ne sont pas connus sûrement (B-TDC-004) : non transmissible.
+      # formulaire `3310CA3`, par premier millésime d'application
+      # (réponses de TELEDEC du 29 septembre 2026, D-TDC3-003) : A4
+      # importations `DK`, A5 sorties de régime suspensif `KV`, B2
+      # acquisitions intracommunautaires `CC` ; `KW`, `KX`, `KZ` sont les
+      # lignes E4, E5, F1 (opérations non imposables, pour information) ;
+      # taxes assimilées de l'annexe 3310-A en ligne 29 (`KB`). Il n'y a pas
+      # de ligne 14 chez TELEDEC : les opérations aux taux particuliers se
+      # déclarent taux par taux (`ANNEX_CODES`).
       CA3_CODES = {
         2024 => {
-          "A1" => "CA", "A2" => "CB", "A3" => "KH", "A4" => "KW", "A5" => "KX", "B2" => "KZ", "B4" => "CG",
-          "B5" => "CE", "E1" => "DA", "E2" => "DB", "F2" => "DC", "F6" => "DD",
+          "A1" => "CA", "A2" => "CB", "A3" => "KH", "A4" => "DK", "A5" => "KV", "B2" => "CC", "B4" => "CG",
+          "B5" => "CE", "E1" => "DA", "E2" => "DB", "E4" => "KW", "E5" => "KX", "F1" => "KZ", "F2" => "DC",
+          "F6" => "DD",
           "08.base" => "FP", "08.tax" => "GP", "09.base" => "FB", "09.tax" => "GB", "9B.base" => "FR", "9B.tax" => "GR",
           "10.base" => "FM", "10.tax" => "GM", "11.base" => "FN", "11.tax" => "GN", "13.base" => "FC", "13.tax" => "GC",
           "15" => "GG", "16" => "GH", "17" => "GJ", "19" => "HA", "20" => "HB", "21" => "HC", "22" => "HD",
@@ -46,22 +54,70 @@ module Teledec
         },
       }
 
-      # Cases de la CA12 de Partiduo → codes TELEDEC du formulaire
-      # `3517SCA12`. La ligne A1 (total des ventes) n'a pas de code : la
-      # CA12 ne porte que les bases par taux ; A2, A4, A5, B2, B5, 17, 29 et
-      # la ligne 14 n'ont pas d'équivalent sûr : non transmissibles.
+      # Opérations aux taux particuliers (ligne 14 de Partiduo, détaillée
+      # taux par taux par l'annexe, D-R5-006) → codes TELEDEC de la CA3
+      # (base, taxe), par code de taux du jeu initial français :
+      # 2,10 % en métropole, 0,90 % et 13 % en Corse, 1,05 % et 1,75 % dans
+      # les DOM. Un autre taux particulier n'a pas de code sûr : non
+      # transmissible (contrôle bloquant).
+      ANNEX_CODES = {
+        "TP021" => {"MF", "ME"},
+        "COR09" => {"BE", "MA"},
+        "COR13" => {"NN", "NP"},
+        "DPRS"  => {"BP", "CP"},
+        "DOM1"  => {"BQ", "CQ"},
+      }
+
+      # Case de Partiduo d'une ligne de l'annexe : `14.<code du taux>.base`
+      # ou `14.<code du taux>.tax`.
+      ANNEX_BOX = /\A14\.([A-Z0-9_]+)\.(base|tax)\z/
+
+      # Cases de la CA12 de Partiduo (numérotées comme la CA3) → codes
+      # TELEDEC du formulaire `3517SCA12`. La 3517-S ne porte que les bases
+      # et taxes par taux, sans cadre A : A1, A2, A4, A5, B2 et B5 (propres
+      # à la CA3, D-TDC3-003) et la ligne 17 de Partiduo (« dont TVA sur
+      # acquisitions intracommunautaires », comprise dans la ligne 08) ne se
+      # transmettent pas. Taux particuliers : une seule ligne (`EJ`, `FJ`).
+      # La ligne 17 (remboursements provisionnels, `GA`) et la ligne 29
+      # (crédit, `LB`) citées par TELEDEC suivent la numérotation de la
+      # 3517-S : Partiduo ne calcule pas de remboursement provisionnel, son
+      # crédit est sa ligne 25 (`LB`) ; ses taxes assimilées (ligne 29 de
+      # Partiduo) n'ont pas de total sur la 3517-S : non transmissibles.
       CA12_CODES = {
         2024 => {
           "08.base" => "EW", "08.tax" => "FW", "09.base" => "EF", "09.tax" => "FF", "9B.base" => "GF", "9B.tax" => "GH",
           "10.base" => "EU", "10.tax" => "FU", "11.base" => "EV", "11.tax" => "FV", "13.base" => "EG", "13.tax" => "FG",
           "A3" => "EH", "B4" => "VN", "E1" => "EB", "E2" => "EC", "F2" => "ED", "F6" => "EA",
           "15" => "GB", "16" => "GC", "19" => "JA", "20" => "HA", "21" => "KB", "22" => "KA", "23" => "KD",
-          "25" => "LB", "28" => "LA", "ac" => "MM", "sp" => "NA", "ex" => "NB",
+          "25" => "LB", "28" => "LA", "ac" => "MM", "sp" => "NA", "ex" => "NB", "14.base" => "EJ", "14.tax" => "FJ",
         },
       }
 
-      # Cases sans code qui ne sont que des totaux repris ailleurs.
-      IGNORED = {"3517SCA12" => %w[A1]}
+      # Cases sans code qui ne sont que des totaux ou des détails repris
+      # ailleurs.
+      IGNORED = {"3517SCA12" => %w[A1 A2 A4 A5 B2 B5 17]}
+
+      # Zones connues des formulaires de la liasse que Partiduo remplit
+      # (2035 préparée par `liberal`), relevées dans les spécifications de
+      # TELEDEC (millésimes 2025 et 2026 identiques, D-VAL-006). TELEDEC
+      # ignore *sans erreur* une clé inconnue : toute case hors de ces listes
+      # est refusée à la préparation (`teledec.controls.zone_unknown`) et à
+      # l'envoi (D-TDC3-002).
+      ZONE_CODES = {
+        "2035-A" => %w[
+          AA AB AC AD AE AF AG BA BB BC BD BE BF BG BH BJ BK BL BM BN BP BR BS BT BU BV EA EB EC ED EE EF EG EJ EK EL EM
+          EN FC GF GJ GL AW
+        ],
+        "2035-B" => %w[
+          CA CB CC CD CE CF CG CH CK CL CM CN CP CR CS CT CX CY CZ DG AF AD AE DJ DK AC DL AG DM GK HC HE JA AB DP DQ DR
+          DS
+        ],
+        "2035" => %w[AA AB FG FH FJ FV MG NG NH NN NP NQ NR AP AL AM AJ AN AF AR AG AH AS],
+      }
+
+      # Formulaires dont les zones portent le suffixe du formulaire dans le
+      # schéma de TELEDEC (`HA_2065`) ; ailleurs, le code de la case seul.
+      SUFFIXED_ZONE_FORMS = %w[2065 2031]
 
       # Natures de la DAS2 → lettre de la DGFiP (cases 4 et 5).
       DAS2_LETTERS = {
@@ -105,12 +161,31 @@ module Teledec
       def self.unmapped(kind : String, boxes : Hash(String, String), millesime : Int32) : Array(String)
         form = form_key(kind) || return [] of String
         return [] of String unless kind.starts_with?("vat_")
-        table = codes(form, millesime)
-        ignored = IGNORED[form]? || [] of String
         boxes.compact_map do |box, amount|
-          next if Money.parse(amount).zero? || ignored.includes?(box)
-          box unless table.has_key?(box)
+          next if Money.parse(amount).zero?
+          box unless vat_code(form, box, boxes, millesime) || vat_ignored?(form, box, boxes)
         end
+      end
+
+      # Code TELEDEC d'une case de TVA de Partiduo, `nil` s'il n'y en a pas.
+      # CA3 : une ligne de l'annexe (`14.<taux>.base|tax`) va à la case de
+      # son taux.
+      def self.vat_code(form : String, box : String, boxes : Hash(String, String), millesime : Int32) : String?
+        if form == "3310CA3" && (match = ANNEX_BOX.match(box))
+          pair = ANNEX_CODES[match[1]]? || return
+          return match[2] == "base" ? pair[0] : pair[1]
+        end
+        codes(form, millesime)[box]?
+      end
+
+      # Case qui ne se transmet pas, sans être une omission : total ou
+      # détail repris ailleurs. CA3 : la ligne 14 quand l'annexe la détaille
+      # taux par taux ; CA12 : les lignes de l'annexe (la 3517-S n'a qu'une
+      # ligne de taux particuliers).
+      def self.vat_ignored?(form : String, box : String, boxes : Hash(String, String)) : Bool
+        return true if (IGNORED[form]? || [] of String).includes?(box)
+        return ANNEX_BOX.matches?(box) if form == "3517SCA12"
+        box.in?("14.base", "14.tax") && boxes.keys.any?(&.matches?(ANNEX_BOX))
       end
 
       # --- Identifiant de suivi --------------------------------------------------
@@ -139,14 +214,19 @@ module Teledec
 
       # --- Liasse (API Balance) --------------------------------------------------
 
+      # `account` : adresse du compte de l'entreprise chez TELEDEC
+      # (`Account.email`), avec le haché bcrypt de son mot de passe. La
+      # liasse n'a pas de champ d'adresse de rappel : ses rappels vont à
+      # l'adresse configurée chez TELEDEC pour le partenaire (D-TDC3-006).
       def self.liasse(payload : Payload, submission : Submission, credentials : Credentials, source : String,
-                      send_button : Bool) : String
+                      send_button : Bool, account : String) : String
         identity = payload.identity
         category = CATEGORIES[payload.forms]?
         lines = [] of {String, String?}
         lines << {"SOURCE", source}
         lines << {"VERSION", Teledec::VERSION}
-        lines << {"EMAIL", credentials.email}
+        lines << {"EMAIL", account}
+        lines << {"MOT-DE-PASSE", credentials.password_hash}
         lines << {"NOM", identity.company_name}
         lines << {"SIRET", siret(credentials, identity)}
         lines << {"CATEGORIE-FISCALE", category.try(&.[0])}
@@ -176,20 +256,43 @@ module Teledec
       end
 
       # Cases jointes à la liasse (2035 préparée par le module `liberal`) :
-      # zones `<code>_<formulaire>` par formulaire (`2035A`), montants en
-      # euros entiers ; elles priment sur la ventilation de la balance.
+      # zones par formulaire (`2035A`), clé = code de la case seul
+      # (`"2035A": {"AA": …}`), sauf pour la 2065 et la 2031 (`HA_2065`) ;
+      # montants en euros entiers ; elles priment sur la ventilation de la
+      # balance. Une case hors du schéma relevé est refusée
+      # (`teledec.errors.transport.zone_unknown`) : TELEDEC l'ignorerait
+      # sans le dire.
       def self.liasse_zones(payload : Payload) : Hash(String, Hash(String, Int64))?
         boxes = payload.boxes || return
+        unknown = unknown_zones(boxes)
+        unless unknown.empty?
+          raise TransportError.new("teledec.errors.transport.zone_unknown", {"zones" => unknown.join(", ")})
+        end
         zones = boxes.to_h do |form, values|
           name = form.delete('-')
-          {name, values.to_h { |box, amount| {"#{box}_#{name}", integer(amount)} }}
+          suffixed = SUFFIXED_ZONE_FORMS.includes?(name)
+          {name, values.to_h { |box, amount| {suffixed ? "#{box}_#{name}" : box, integer(amount)} }}
         end
         zones.empty? ? nil : zones
       end
 
+      # Cases hors du schéma relevé (`ZONE_CODES`), sous la forme
+      # `<formulaire> <case>` ; un formulaire sans schéma relevé n'a aucune
+      # case connue.
+      def self.unknown_zones(boxes : Hash(String, Hash(String, String))) : Array(String)
+        boxes.flat_map do |form, values|
+          known = ZONE_CODES[form]? || [] of String
+          values.keys.reject { |box| known.includes?(box) }.map { |box| "#{form} #{box}" }
+        end
+      end
+
       # --- Marque blanche ---------------------------------------------------------
 
-      def self.white_label(payload : Payload, submission : Submission, credentials : Credentials, now : Time) : String
+      # `account` : adresse du compte de l'entreprise chez TELEDEC
+      # (`auth.email`) ; l'email de contact des paramètres va dans
+      # l'identité.
+      def self.white_label(payload : Payload, submission : Submission, credentials : Credentials, now : Time,
+                           account : String) : String
         form = form_key(payload.kind) || raise TransportError.new("teledec.errors.transport.unsupported")
         identity = payload.identity
         year_end = submission.year_end.try { |day| Time.parse(day, "%F", Time::Location::UTC) } ||
@@ -204,7 +307,7 @@ module Teledec
           json.object do
             json.field "auth" do
               json.object do
-                json.field "email", credentials.email
+                json.field "email", account
                 json.field "timestamp", paris(now).to_s("%Y-%m-%dT%H:%M:%S")
                 submission.callback_url.try { |url| json.field "url", url }
                 json.field "bloquerSiIncoherence", false
@@ -253,12 +356,12 @@ module Teledec
         # Totaux recalculés sur les cases arrondies (déjà fait à la
         # préparation ; sans effet sur un document cohérent).
         boxes = VatTotals.coherent(payload.kind, payload.boxes.try(&.values.first?) || {} of String => String)
-        table = codes(form, millesime(payload))
+        millesime = millesime(payload)
         block = {} of String => JSON::Any
         boxes.each do |box, amount|
           value = integer(amount)
-          next if value.zero?
-          code = table[box]? || next
+          next if value.zero? || vat_ignored?(form, box, boxes)
+          code = vat_code(form, box, boxes, millesime) || next
           block[code] = JSON::Any.new(value)
         end
         if form == "3517SCA12"
@@ -293,13 +396,15 @@ module Teledec
         {due, block}
       end
 
-      # DAS2 : établissement déclarant, une répétition par bénéficiaire et
-      # par nature (lettre de la DGFiP, SIRET de l'établissement en `AD`),
-      # totaux par nature. Bénéficiaire personne physique (fiche fournisseur
-      # `individual`) : nom (`AE_3036_1`), prénoms (`AE_3036_2`) et date de
-      # naissance (`AI`, `AAAA-MM-JJ` comme les dates de la période, forme
-      # à confirmer sur le stage, BLOCAGES B-TDC-004) ; sinon raison sociale
-      # (`AF_3036_1`). DECISIONS D-R5-002.
+      # DAS2 : établissement déclarant, *une* répétition `repetitionDAS2TV`
+      # par bénéficiaire (SIRET de l'établissement en `AD`), ses natures dans
+      # le sous-tableau `repetitionDAS2MontantSommesVersees` (`CA` lettre de
+      # la DGFiP, `BA` montant), totaux par nature (D-TDC3-004). Personne
+      # physique (fiche fournisseur `individual`) : nom (`AE_3036_1`),
+      # prénoms (`AE_3036_2`) et date de naissance (`AI`, `AAAA-MM-JJ`,
+      # forme à confirmer sur le stage, BLOCAGES B-TDC-004) ; personne
+      # morale : raison sociale (`AF_3036_1`) et SIRET (`AF_3039_1`).
+      # DECISIONS D-R5-002.
       private def self.das2_block(payload : Payload, credentials : Credentials) : Hash(String, JSON::Any)
         identity = payload.identity
         lines = payload.das2 || [] of Payload::Das2Line
@@ -313,6 +418,7 @@ module Teledec
         beneficiaries = [] of JSON::Any
         totals = Hash(String, Int64).new(0_i64)
         lines.each do |line|
+          amounts = [] of JSON::Any
           line.amounts.each do |nature, amount|
             value = integer(amount)
             next if value.zero?
@@ -321,24 +427,25 @@ module Teledec
             letter = DAS2_LETTERS[nature]? ||
                      raise TransportError.new("teledec.errors.transport.das2_nature", {"nature" => nature})
             totals[letter] += value
-            item = {} of String => JSON::Any
-            establishment.try { |number| item["AD"] = JSON::Any.new(number) }
-            item["AF_3039_1"] = JSON::Any.new(line.siret) unless line.siret.empty?
-            if line.person?
-              item["AE_3036_1"] = JSON::Any.new(line.last_name)
-              item["AE_3036_2"] = JSON::Any.new(line.first_names)
-              item["AI"] = JSON::Any.new(line.birth_date) unless line.birth_date.empty?
-            else
-              item["AF_3036_1"] = JSON::Any.new(line.name)
-            end
-            item["AG_3042_1"] = JSON::Any.new(line.address) unless line.address.empty?
-            item["AG_3251_1"] = JSON::Any.new(line.postcode) unless line.postcode.empty?
-            item["AG_3164_1"] = JSON::Any.new(line.city) unless line.city.empty?
-            item["AH_4440_1"] = JSON::Any.new(line.profession) unless line.profession.empty?
-            item["CA"] = JSON::Any.new(letter)
-            item["BA"] = JSON::Any.new(value)
-            beneficiaries << JSON::Any.new(item)
+            amounts << JSON::Any.new({"CA" => JSON::Any.new(letter), "BA" => JSON::Any.new(value)})
           end
+          next if amounts.empty?
+          item = {} of String => JSON::Any
+          establishment.try { |number| item["AD"] = JSON::Any.new(number) }
+          if line.person?
+            item["AE_3036_1"] = JSON::Any.new(line.last_name)
+            item["AE_3036_2"] = JSON::Any.new(line.first_names)
+            item["AI"] = JSON::Any.new(line.birth_date) unless line.birth_date.empty?
+          else
+            item["AF_3036_1"] = JSON::Any.new(line.name)
+            item["AF_3039_1"] = JSON::Any.new(line.siret) unless line.siret.empty?
+          end
+          item["AG_3042_1"] = JSON::Any.new(line.address) unless line.address.empty?
+          item["AG_3251_1"] = JSON::Any.new(line.postcode) unless line.postcode.empty?
+          item["AG_3164_1"] = JSON::Any.new(line.city) unless line.city.empty?
+          item["AH_4440_1"] = JSON::Any.new(line.profession) unless line.profession.empty?
+          item["repetitionDAS2MontantSommesVersees"] = JSON::Any.new(amounts)
+          beneficiaries << JSON::Any.new(item)
         end
         block["repetitionDAS2TV"] = JSON::Any.new(beneficiaries)
         block["repetitionDAS2TotauxSommesVersees"] = JSON::Any.new(totals.map do |letter, total|
@@ -357,12 +464,17 @@ module Teledec
       # --- États et comptes-rendus ------------------------------------------------
 
       # État d'un dépôt d'après le statut de TELEDEC (insensible à la
-      # casse : l'API rend `readyToBeSent` comme `ReadyToBeSent`).
+      # casse : l'API rend `readyToBeSent` comme `ReadyToBeSent`) : `OK` ou
+      # `Accepted`, accepté par la DGFiP ; `ERREUR` ou `Rejected`, rejeté par
+      # la DGFiP ; tout autre état est en attente — `CompleteWithErrors` et
+      # `CompleteWithWarnings` sont les contrôles internes de TELEDEC *avant*
+      # l'envoi (bloquants, non bloquants), pas des retours de la DGFiP
+      # (réponses de TELEDEC du 29 septembre 2026, D-TDC3-005).
       def self.state(status : String) : String
         case normalize(status)
-        when "ok", "accepted", "completewithwarnings"   then "acknowledged"
-        when "erreur", "rejected", "completewitherrors" then "rejected"
-        else                                                 "pending"
+        when "ok", "accepted"     then "acknowledged"
+        when "erreur", "rejected" then "rejected"
+        else                           "pending"
         end
       end
 
@@ -393,18 +505,38 @@ module Teledec
         end
       end
 
-      # Type de rappel attendu pour une sorte de dépôt (`declarationType`),
-      # `nil` quand la documentation ne le dit pas (DAS2, IS, greffe) : seul
-      # un rappel de paiement est alors écarté.
-      DECLARATION_TYPES = {"vat_ca3" => "tva", "vat_ca12" => "tva", "liasse" => "liasse"}
+      # Type de rappel (`declarationType`) de chaque sorte de dépôt
+      # (réponses de TELEDEC du 29 septembre 2026, D-TDC3-005) : la DAS2 est
+      # une déclaration `part`, les relevés 2571 et 2572 des `paiement`
+      # (non distingués entre eux).
+      DECLARATION_TYPES = {"vat_ca3" => "tva", "vat_ca12" => "tva", "liasse" => "liasse", "das2" => "part",
+                           "is_2571" => "paiement", "is_2572" => "paiement", "greffe" => "greffe"}
+
+      # Sorte de dépôt d'un formulaire de suivi (`liasse`, `3310CA3`…).
+      def self.kind_of_form(form : String) : String?
+        FORM_KEYS.key_for?(form)
+      end
 
       # Le compte-rendu `report` concerne-t-il la déclaration d'un dépôt de
-      # sorte `kind` ? Non pour un paiement, ni pour un type connu différent.
-      def self.concerns?(report : Report, kind : String) : Bool
-        return false if report.payment?
+      # sorte `kind` ? Type attendu s'il est donné ; sans type, oui, sauf un
+      # rappel de paiement pour une autre sorte qu'un relevé d'IS.
+      def self.concerns?(report : Report, kind : String?) : Bool
         type = normalize(report.declaration_type)
-        expected = DECLARATION_TYPES[kind]?
-        type.empty? || expected.nil? || type == expected
+        expected = kind.try { |value| DECLARATION_TYPES[value]? }
+        return type == expected if expected && !type.empty?
+        !report.payment? || expected == "paiement"
+      end
+
+      # Identité de l'entreprise pour `POST /service/creation-entreprise`
+      # (compte en marque blanche, D-TDC3-007).
+      def self.company_identity(payload : Payload, credentials : Credentials, year_end : Time) : Hash(String, String | Int32)
+        identity = payload.identity
+        hash = {"siren" => identity.siren, "name" => identity.company_name, "yearEndMonth" => year_end.month,
+                "yearEndDay" => year_end.day} of String => String | Int32
+        {"addressStreet" => identity.street, "addressPostalCode" => identity.postcode, "addressCity" => identity.city,
+         "addressCountry" => identity.country_code, "legalForm" => legal_form(identity.legal_form).to_s,
+         "email" => credentials.email}.each { |name, value| hash[name] = value unless value.empty? }
+        hash
       end
 
       def self.report(any : JSON::Any) : Report
@@ -413,12 +545,12 @@ module Teledec
           value = hash[name]?
           value.nil? || value.raw.nil? ? "" : (value.as_s? || value.raw.to_s)
         end
-        # Le statut des formulaires, s'il est donné, fait seul foi : `Sent`
-        # (parti à la DGFiP, pas encore accepté) reste en attente même si
-        # l'étape du rappel (`status`) vaut `OK`.
-        status = text.call("formulairesStatus").presence ||
-                 [text.call("status"), text.call("declarationStatus")].find { |value| state(value) != "pending" } ||
-                 text.call("status").presence || text.call("declarationStatus")
+        # Statut à suivre (réponses de TELEDEC du 29 septembre 2026) : celui
+        # de la déclaration (`declarationStatus`), sinon `status` — `SENT`
+        # soumis, `OK` accepté, `ERREUR` rejeté par la DGFiP ; à défaut, le
+        # statut des formulaires.
+        status = text.call("declarationStatus").presence || text.call("status").presence ||
+                 text.call("formulairesStatus")
         pdf = text.call("pdf").presence.try do |encoded|
           Base64.decode(encoded)
         rescue Base64::Error

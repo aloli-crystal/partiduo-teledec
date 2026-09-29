@@ -59,5 +59,5 @@ PartiduoUi::Extensions.mount Teledec::CODE, Teledec::Ui::ROUTES, permission: Tel
 
 # Rappels de TELEDEC (webhook) : appel de machine à machine, sans session,
 # donc hors de `/ext/` (qui exige un utilisateur connecté) ; authentifié par
-# le jeton des rappels (`Teledec::Ui::CallbackHandler`).
+# le mot de passe des rappels du partenaire (`Teledec::Ui::CallbackHandler`).
 Marten.routes.path Teledec::Api::CALLBACK_PATH, Teledec::Ui::CallbackHandler, name: "teledec_callback"

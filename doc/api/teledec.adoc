@@ -38,21 +38,23 @@ D-TDC-001 à D-TDC-028.
 * `update_settings(actor, SettingsInput)` ; sans la Comptabilité, un
   régime autre que `bnc` est refusé (`tax_system`,
   `teledec.errors.accounting_required`).
-* `save_credentials(actor, CredentialsInput(login, api_key, env, email, siret, renew_callback_token))` —
+* `save_credentials(actor, CredentialsInput(login, api_key, env, email, siret))` —
   `login` et `api_key` : identifiant et secret du client OAuth2 de TELEDEC,
   chiffrés ; vérifiés par le transport s'il est branché (un jeton est
   demandé) ; secret vide : secret enregistré gardé
   (`teledec.errors.credentials.unreadable` s'il ne se déchiffre plus) ;
-  `email` : compte TELEDEC de l'entreprise (vide : email de la société,
-  `teledec.errors.credentials.email`) ; `siret` : 14 chiffres ou vide
-  (`teledec.errors.credentials.siret`), commençant par le SIREN de la
-  société (`teledec.errors.credentials.siret_siren`). Crée le jeton des
-  rappels s'il n'y en a pas, le renouvelle si `renew_callback_token`.
-  `clear_credentials(actor)`.
-* `SettingsView#email`, `#siret`, `#callback_path` (chemin des rappels,
-  jeton compris), `#callback_url` (adresse complète en https sous
-  l'adresse publique de l'instance, vide si elle est inconnue) : vides
-  pour qui n'a pas `teledec.settings.manage`.
+  `email` : email de contact de l'entreprise, repris dans son identité
+  (vide : email de la société, `teledec.errors.credentials.email`) ;
+  `siret` : 14 chiffres ou vide (`teledec.errors.credentials.siret`),
+  commençant par le SIREN de la société
+  (`teledec.errors.credentials.siret_siren`). `clear_credentials(actor)`.
+* `SettingsView#email`, `#siret`, `#callback_path` (chemin des rappels),
+  `#callback_url` (adresse complète en https sous l'adresse publique de
+  l'instance, vide si elle est inconnue ou si le mot de passe des rappels
+  n'est pas réglé), `#account_email` (compte de l'entreprise chez TELEDEC,
+  dans le domaine du partenaire ; vide sans `PARTIDUO_TELEDEC_USER_DOMAIN`) :
+  vides pour qui n'a pas `teledec.settings.manage` ; `#callback_password` :
+  mot de passe des rappels réglé dans l'instance (D-TDC3-006, D-TDC3-007).
 
 == Déclarations
 
@@ -89,23 +91,29 @@ D-TDC-001 à D-TDC-028.
   préparé de nouveau pendant l'envoi (`teledec.errors.filing.concurrent`,
   référence TELEDEC notée dans l'historique). Clé d'idempotence :
   `partiduo-<dépôt>-<rang>-<empreinte>`. Toute transition prend le verrou
-  des dépôts et relit le dépôt (DECISIONS D-TDC-013).
+  des dépôts et relit le dépôt (DECISIONS D-TDC-013). Compte de
+  l'entreprise chez TELEDEC : adresse dans le domaine du partenaire
+  (`teledec.errors.transport.user_domain` sans réglage), haché bcrypt du
+  mot de passe créé à la première transmission ; créé par la liasse, ou par
+  `creation-entreprise` avant la première déclaration en marque blanche.
 * `refresh(actor, id)`, `refresh_all(actor)` — état chez TELEDEC
   (`FilingView#remote_status`, `REMOTE_STATUSES`), accusé (pièce jointe du
   socle) ou rejet (motif : erreurs de la DGFiP) ; les comptes-rendus d'un
-  paiement ou d'un envoi précédent (autre référence) ne font pas foi ;
-  `refresh_all` isole chaque dépôt.
-* `callback(presented_token, body) : String` — rappel de TELEDEC, sans
-  acteur, authentifié par le jeton des rappels ; rend `unauthorized`,
+  autre type de déclaration (paiement, sauf pour un relevé d'IS) ou d'un
+  envoi précédent (autre référence) ne font pas foi ; `refresh_all` isole
+  chaque dépôt.
+* `callback(authorization, body) : String` — rappel de TELEDEC, sans
+  acteur, authentifié par le mot de passe des rappels du partenaire en
+  `Basic` (`PARTIDUO_TELEDEC_CALLBACK_PASSWORD`) ; rend `unauthorized`,
   `invalid`, `ignored` ou `ok` ; idempotent sur l'identifiant de la
   déclaration ; rattaché par la référence (par `declarationId` seulement
-  sans référence ; référence inconnue : `ignored`) ; rappels de paiement
-  ou d'un autre type de déclaration : `ignored` ; `formulairesStatus`,
-  s'il est donné, fait seul foi (`Sent` : en attente) ; `ModuleDisabled`
-  si l'extension est inactive. Servi par
-  l'interface sur `CALLBACK_PATH` (`/hooks/TELEDEC/callback`, hors de
-  `/ext/`, sans session ni jeton CSRF ; jeton en `Basic`, `Bearer` ou
-  paramètre `token` ; 413 si `Content-Length` dépasse
+  sans référence ; référence inconnue : `ignored`) ; rappels d'un autre
+  type de déclaration (`declarationType` : `TVA`, `Liasse`, `Part` pour la
+  DAS2, `Paiement` pour les relevés d'IS) : `ignored` ; statut suivi :
+  `declarationStatus`, sinon `status` ; `ModuleDisabled` si l'extension
+  est inactive. Servi par l'interface sur `CALLBACK_PATH`
+  (`/hooks/TELEDEC/callback`, hors de `/ext/`, sans session ni jeton
+  CSRF ; `Basic` seulement ; 413 si `Content-Length` dépasse
   `Callbacks::MAX_BYTES`).
 * `record_outcome(actor, id, OutcomeInput)` — repli : transmis (référence),
   accusé (fichier facultatif), rejeté (motif obligatoire) ; une seule
@@ -160,27 +168,35 @@ Teledec::Transports.current = … # Teledec::HttpTransport par défaut ; nil : r
 `grant_type=client_credentials`, scopes `stage/…` (environnement de test)
 ou `prod/…` ; cache jusqu'à `expires_in` moins une minute ; 401 : nouveau
 jeton, appel rejoué une fois.
-|Liasse |`POST /service/liasse` (texte) : `#SOURCE`, `#VERSION`, `#EMAIL`,
-`#NOM`, `#SIRET` (obligatoire ici), `#CATEGORIE-FISCALE` et
+|Liasse |`POST /service/liasse` (texte) : `#SOURCE` (`API`), `#VERSION`,
+`#EMAIL` et `#MOT-DE-PASSE` (compte de l'entreprise, haché bcrypt), `#NOM`, `#SIRET` (obligatoire ici), `#CATEGORIE-FISCALE` et
 `#REEL-NORMAL-OU-SIMPLIFIE` (d'après les formulaires), dates d'exercice,
 forme juridique, adresse, `#AFFICHAGE-BOUTON-ENVOYER`, `#REFERENCE` ;
 balance `compte;libellé;0;0;débit;crédit;solde débit;solde crédit` ;
-2035 préparée en bloc JSON `zones_formulaires`. Réponse : URL de la liasse.
+2035 préparée en bloc JSON `zones_formulaires` (clé = code de la case
+seul, sauf 2065 et 2031 ; case hors du schéma relevé refusée). Réponse :
+URL de la liasse. Pas de champ d'adresse de rappel.
 |TVA, DAS2, IS |`POST /service/declaration-marque-blanche` (JSON `auth`,
 `identity`, `period`, bloc `3310CA3`, `3517SCA12`, `DAS2`, `2571`, `2572`) ;
-codes par millésime (`Remote::Formats`) ; lien demandé
-(`retournerLien`). Une case de TVA sans code bloque la préparation
-(`teledec.controls.box_unmapped`).
+codes par millésime (`Remote::Formats`) ; CA3 : taux particuliers taux
+par taux (`ANNEX_CODES`), sans ligne 14 ; DAS2 : un `repetitionDAS2TV` par
+bénéficiaire, natures en `repetitionDAS2MontantSommesVersees` ; lien
+demandé (`retournerLien`) ; adresse de rappel en `auth.url`. Une case de
+TVA sans code bloque la préparation (`teledec.controls.box_unmapped`).
+Compte de l'entreprise créé avant la première déclaration
+(`POST /service/creation-entreprise`).
 |Suivi |`GET /service/declaration-status` (404 : pas encore de
 déclaration) ; accepté ou rejeté : compte-rendu le plus récent
 (`compteRendus`, sinon `/service/recuperation-liste-compterendus`) — accusé
 PDF, erreurs de la DGFiP (`declarationErreurs`).
-|Greffe |pas de route documentée : `teledec.errors.transport.unsupported`.
+|Greffe |pas de dépôt par l'API (redirection en marque blanche, routes non
+documentées) : `teledec.errors.transport.greffe`.
 |===
 
-États : `NotCompleted`, `ReadyToBeSent`, `Sent` → transmis (en attente) ;
-`OK`, `Accepted`, `CompleteWithWarnings` → accusé ; `ERREUR`, `Rejected`,
-`CompleteWithErrors` → rejeté (casse indifférente).
+États : `NotCompleted`, `ReadyToBeSent`, `Sent`, `CompleteWithErrors`,
+`CompleteWithWarnings` (contrôles internes de TELEDEC avant l'envoi) →
+transmis (en attente) ; `OK`, `Accepted` → accusé ; `ERREUR`, `Rejected` →
+rejeté (casse indifférente).
 
 == Document transmis
 
@@ -191,8 +207,9 @@ empreinte SHA-256 du JSON.
 
 == Base
 
-Tables `teledec_settings` (ligne unique ; email du compte TELEDEC, SIRET,
-jeton des rappels chiffré), `teledec_filing` (suivi chez TELEDEC :
+Tables `teledec_settings` (ligne unique ; email de contact, SIRET, haché
+bcrypt du mot de passe du compte de l'entreprise chez TELEDEC et
+environnement où il a été créé ; ancien jeton des rappels vidé), `teledec_filing` (suivi chez TELEDEC :
 `remote_reference`, `remote_status`, `remote_url`, `declaration_id` ; valeurs
 contrôlées, clés étrangères vers `core_attachment` (accusé),
 `core_fiscal_year` et `auth_user` (auteurs, `ON DELETE SET NULL`), déclencheur

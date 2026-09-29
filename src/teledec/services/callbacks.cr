@@ -1,24 +1,28 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+require "base64"
 require "crypto/subtle"
 
 module Teledec
   # Rappels de TELEDEC (webhook) : à chaque étape d'une déclaration
-  # (envoi, accusé ou rejet de la DGFiP), TELEDEC poste un JSON
-  # (`declarationId`, `reference`, `status`, `formulairesStatus`,
-  # `declarationErreurs`, `pdf` de l'accusé…) à l'adresse donnée dans
-  # `auth.url` de la marque blanche, ou à celle configurée chez TELEDEC
-  # (protégée par HTTP Basic ou jeton permanent).
+  # (envoi, accusé ou rejet de la DGFiP), liasse comprise, TELEDEC poste un
+  # JSON (`declarationId`, `reference`, `status`, `declarationStatus`,
+  # `declarationErreurs`, `pdf` de l'accusé…) à l'adresse donnée dans le
+  # champ `url` de chaque dépôt en marque blanche (`auth.url`), ou à celle
+  # configurée chez TELEDEC pour le partenaire (la liasse n'a pas de champ
+  # d'adresse).
   #
-  # Le rappel est authentifié par le jeton des rappels de l'instance
-  # (aléatoire, chiffré dans les paramètres), présenté en mot de passe
-  # `Basic` (à préférer : configuré chez TELEDEC), en `Bearer` ou en
-  # paramètre `token` (adresse `auth.url`, en https seulement) ; il est
-  # rattaché au dépôt par la référence envoyée (sinon, sans référence, par
-  # l'identifiant de la déclaration), les rappels de paiement sont
-  # ignorés, et il est idempotent : un rappel rejoué pour une déclaration
-  # déjà accusée ou rejetée ne change rien. Interne : appelé par
-  # `Api.callback`.
+  # Authentification (réponses de TELEDEC du 29 septembre 2026,
+  # D-TDC3-006) : HTTP `Basic`, avec *un* mot de passe par partenaire,
+  # configuré chez TELEDEC et dans l'instance
+  # (`PARTIDUO_TELEDEC_CALLBACK_PASSWORD`, jamais journalisé ni affiché ;
+  # identifiant facultatif `PARTIDUO_TELEDEC_CALLBACK_USER`). Sans mot de
+  # passe réglé, tout rappel est refusé et le suivi se fait par `refresh`.
+  # Le rappel est rattaché au dépôt par la référence envoyée (sinon, sans
+  # référence, par l'identifiant de la déclaration), ceux d'un autre type
+  # de déclaration sont ignorés, et il est idempotent : un rappel rejoué
+  # pour une déclaration déjà accusée ou rejetée ne change rien. Interne :
+  # appelé par `Api.callback`.
   module Callbacks
     alias Api = Teledec::Api
 
@@ -31,9 +35,8 @@ module Teledec
     # 2,5 Mo par défaut).
     MAX_BYTES = 8 * 1024 * 1024
 
-    def self.new_token : String
-      Random::Secure.urlsafe_base64(32)
-    end
+    PASSWORD_VARIABLE = "PARTIDUO_TELEDEC_CALLBACK_PASSWORD"
+    USER_VARIABLE     = "PARTIDUO_TELEDEC_CALLBACK_USER"
 
     def self.active? : Bool
       Partiduo::Api::Modules.get(Partiduo::Api::Actor.system, CODE).active
@@ -41,16 +44,14 @@ module Teledec
       false
     end
 
-    # Jeton des rappels, `nil` s'il n'y en a pas (ou illisible).
-    def self.token(settings : Settings = Settings.current!) : String?
-      Secrets.decrypt(settings.callback_token.to_s).presence
-    rescue Secrets::Error
-      nil
+    # Mot de passe des rappels du partenaire (réglage de l'instance), `nil`
+    # s'il n'est pas réglé.
+    def self.password : String?
+      ENV[PASSWORD_VARIABLE]?.presence
     end
 
-    # Chemin des rappels, jeton compris ; `nil` sans jeton.
-    def self.path(settings : Settings = Settings.current!) : String?
-      token(settings).try { |value| "#{PATH}?#{URI::Params.encode({"token" => value})}" }
+    def self.configured? : Bool
+      !password.nil?
     end
 
     # Adresse publique de l'instance (`https://<hôte>`), tirée de ses
@@ -72,19 +73,38 @@ module Teledec
     # Nom d'hôte, port facultatif ; ni schéma, ni chemin, ni joker.
     HOST = /\A[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:\d{1,5})?\z/
 
-    # Adresse complète des rappels, jeton compris, sous `base_url` (défaut :
-    # adresse publique de l'instance) ; `https://` seulement — le jeton ne
-    # circule jamais en clair —, sinon `nil` (suivi par `refresh`). `nil`
-    # aussi sans jeton.
+    # Adresse des rappels sous `base_url` (défaut : adresse publique de
+    # l'instance), donnée à TELEDEC dans chaque dépôt ; `https://`
+    # seulement (le mot de passe `Basic` ne circule jamais en clair), et
+    # seulement si le mot de passe des rappels est réglé, sinon `nil`
+    # (suivi par `refresh`).
     def self.url(base_url : String? = instance_base_url) : String?
+      return unless configured?
       base = base_url.try(&.rstrip('/')).presence || return
       return unless base.starts_with?("https://")
-      path.try { |value| "#{base}#{value}" }
+      "#{base}#{PATH}"
     end
 
-    def self.authenticate(presented : String?) : Bool
-      expected = token || return false
-      value = presented || return false
+    # Vérifie l'en-tête `Authorization` (`Basic`) : mot de passe du
+    # partenaire (et identifiant s'il est réglé), comparés en temps
+    # constant.
+    def self.authenticate(authorization : String?) : Bool
+      expected = password || return false
+      header = authorization.to_s.strip
+      return false unless header.starts_with?("Basic ")
+      decoded = begin
+        String.new(Base64.decode(header.lchop("Basic ").strip))
+      rescue Base64::Error
+        return false
+      end
+      user, _, presented = decoded.partition(':')
+      if wanted_user = ENV[USER_VARIABLE]?.presence
+        return false unless same?(user, wanted_user)
+      end
+      same?(presented, expected)
+    end
+
+    private def self.same?(value : String, expected : String) : Bool
       return false unless value.bytesize == expected.bytesize
       Crypto::Subtle.constant_time_compare(value.to_slice, expected.to_slice)
     end

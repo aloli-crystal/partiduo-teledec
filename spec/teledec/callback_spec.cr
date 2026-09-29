@@ -15,17 +15,17 @@ private def transmitted_liasse : Api::FilingView
 end
 
 private def token : String
-  path = Api.settings(S.admin).callback_path
-  URI::Params.parse(URI.parse(path).query.to_s)["token"]
+  S.callback_authorization
 end
 
 describe "Rappels de TELEDEC (webhook)" do
-  it "authentifie le rappel par le jeton de l'instance" do
+  it "authentifie le rappel par le mot de passe des rappels du partenaire" do
     filing = transmitted_liasse
     S.teledec.acknowledge(S::LIASSE_ID)
     body = S.teledec.callback_body(S::LIASSE_ID)
     Api.callback(nil, body).should eq("unauthorized")
     Api.callback("faux", body).should eq("unauthorized")
+    Api.callback(S.callback_authorization("faux"), body).should eq("unauthorized")
     Api.settings(S.admin([Api::READ])).callback_path.should eq("")
     Api.filing(S.admin, filing.id).status.should eq("transmitted")
   end
@@ -49,7 +49,8 @@ describe "Rappels de TELEDEC (webhook)" do
   it "note le rejet, suit un rappel intermédiaire et ignore une référence inconnue ou un corps illisible" do
     filing = transmitted_liasse
     sent = JSON.parse(S.teledec.callback_body(S::LIASSE_ID)).as_h
-    sent["status"] = JSON::Any.new("Sent")
+    sent["status"] = JSON::Any.new("OK")
+    sent["declarationStatus"] = JSON::Any.new("SENT")
     sent["formulairesStatus"] = JSON::Any.new("Sent")
     Api.callback(token, sent.to_json).should eq("ok")
     Api.filing(S.admin, filing.id).remote_status.should eq("sent")
@@ -69,15 +70,18 @@ describe "Rappels de TELEDEC (webhook)" do
     Marten.routes.reverse("teledec_callback").should eq("/hooks/TELEDEC/callback")
     client = Marten::Spec::Client.new
     client.post("/hooks/TELEDEC/callback", content_type: "application/json", data: body).status.should eq(401)
-    basic = {"Authorization" => "Basic #{Base64.strict_encode("teledec:#{token}")}"}
+    basic = {"Authorization" => token}
     client.post("/hooks/TELEDEC/callback", content_type: "application/json", data: body, headers: basic).status.should eq(200)
     Api.filing(S.admin, filing.id).status.should eq("acknowledged")
-    bearer = {"Authorization" => "Bearer #{token}"}
-    client.post("/hooks/TELEDEC/callback", content_type: "application/json", data: body, headers: bearer).status.should eq(200)
-    client.post("/hooks/TELEDEC/callback", query_params: {"token" => token}, content_type: "application/json", data: "{")
-      .status.should eq(400)
+    # Ni `Bearer`, ni jeton en paramètre : un mot de passe par partenaire, en `Basic`.
+    password = ENV["PARTIDUO_TELEDEC_CALLBACK_PASSWORD"]
+    bearer = {"Authorization" => "Bearer #{password}"}
+    client.post("/hooks/TELEDEC/callback", content_type: "application/json", data: body, headers: bearer).status.should eq(401)
+    client.post("/hooks/TELEDEC/callback", query_params: {"token" => password}, content_type: "application/json", data: body)
+      .status.should eq(401)
+    client.post("/hooks/TELEDEC/callback", content_type: "application/json", data: "{", headers: basic).status.should eq(400)
     Partiduo::Api::Modules.deactivate(S::SYSTEM, Teledec::CODE).value!
-    client.post("/hooks/TELEDEC/callback", content_type: "application/json", data: body, headers: bearer).status.should eq(404)
+    client.post("/hooks/TELEDEC/callback", content_type: "application/json", data: body, headers: basic).status.should eq(404)
     client.get("/hooks/TELEDEC/callback").status.should eq(405)
   end
 end

@@ -10,8 +10,10 @@ private def identity(legal_form : String = "SARL", siren : String = "732829320",
     street, "69002", "Lyon", "FR", "contact@atelier-brunet.test")
 end
 
+private ACCOUNT = "teledec-732829320@partiduo.test"
+
 private def credentials(email : String = "compta@atelier-brunet.test", siret : String = "73282932000074") : Teledec::Credentials
-  Teledec::Credentials.new("login", "secret", "sandbox", email, siret)
+  Teledec::Credentials.new("login", "secret", "sandbox", email, siret, password_hash: "$2a$12$empreinte")
 end
 
 private def submission(kind : String, due_on : String? = nil, year_end : String? = nil,
@@ -29,7 +31,7 @@ end
 # Document marque blanche produit pour `payload` (horodatage fixé).
 private def white_label(payload : Payload, sub : Teledec::Submission = submission(payload.kind),
                         creds : Teledec::Credentials = credentials) : JSON::Any
-  JSON.parse(Formats.white_label(payload, sub, creds, Time.utc(2026, 7, 1, 22, 30)))
+  JSON.parse(Formats.white_label(payload, sub, creds, Time.utc(2026, 7, 1, 22, 30), ACCOUNT))
 end
 
 describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
@@ -97,12 +99,43 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       Formats.codes("3517SCA12", 2026)["08.base"].should eq("EW")
     end
 
-    it "ignore les cases nulles, les totaux repris ailleurs et les sortes hors TVA" do
+    it "ignore les cases nulles, les totaux et détails repris ailleurs et les sortes hors TVA" do
       Formats.unmapped("vat_ca3", {"14.base" => "0.00", "A1" => "10"}, 2026).should be_empty
       Formats.unmapped("vat_ca12", {"A1" => "1000", "08.base" => "1000"}, 2026).should be_empty
-      Formats.unmapped("vat_ca12", {"14.tax" => "3", "A2" => "1"}, 2026).should eq(["14.tax", "A2"])
+      # CA12 : cadre A et « dont » de la ligne 17 propres à la CA3 ; taux
+      # particuliers sur une ligne (EJ, FJ) ; taxes assimilées sans total.
+      Formats.unmapped("vat_ca12", {"14.tax" => "3", "A2" => "1", "A4" => "1", "A5" => "1", "B2" => "1", "B5" => "1",
+                                    "17" => "1", "29" => "4"}, 2026).should eq(["29"])
       Formats.unmapped("liasse", {"zz" => "1"}, 2026).should be_empty
       Formats.unmapped("inconnue", {"zz" => "1"}, 2026).should be_empty
+    end
+
+    it "reprend les codes de la CA3 confirmés par TELEDEC (A4, A5, B2, E4, E5, F1, ligne 29)" do
+      table = Formats.codes("3310CA3", 2026)
+      {table["A4"], table["A5"], table["B2"], table["E4"], table["E5"], table["F1"], table["29"]}
+        .should eq({"DK", "KV", "CC", "KW", "KX", "KZ", "KB"})
+    end
+
+    it "déclare les taux particuliers de la CA3 taux par taux, sans ligne 14" do
+      boxes = {"14.base" => "1500", "14.tax" => "40.50", "14.TP021.base" => "1000.40", "14.TP021.tax" => "21.01",
+               "14.COR13.base" => "100", "14.COR13.tax" => "13", "14.DOM1.base" => "399.60", "14.DOM1.tax" => "6.99"}
+      Formats.unmapped("vat_ca3", boxes, 2026).should be_empty
+      Formats.unmapped("vat_ca3", {"14.base" => "50"}, 2026).should eq(["14.base"])
+      Formats.unmapped("vat_ca3", {"14.base" => "50", "14.XX9.base" => "50"}, 2026).should eq(["14.XX9.base"])
+      block = white_label(vat("vat_ca3", boxes))["3310CA3"].as_h
+      {block["MF"], block["ME"], block["NN"], block["NP"], block["BQ"], block["CQ"]}.map(&.as_i)
+        .should eq({1000, 21, 100, 13, 400, 7})
+      # Ligne 14 reportée des lignes arrondies : TVA brute 21 + 13 + 7.
+      block["GH"].as_i.should eq(41)
+      block["KE"].as_i.should eq(41)
+      Teledec::VatTotals.coherent("vat_ca3", boxes)["14.tax"].should eq("41")
+    end
+
+    it "met les taux particuliers de la CA12 sur sa ligne unique (EJ, FJ)" do
+      boxes = {"14.base" => "1000", "14.tax" => "21", "14.TP021.base" => "1000", "14.TP021.tax" => "21", "A2" => "3"}
+      block = white_label(vat("vat_ca12", boxes, "2026-01-01", "2026-12-31", "year"))["3517SCA12"].as_h
+      {block["EJ"], block["FJ"]}.map(&.as_i).should eq({1000, 21})
+      block.has_key?("MF").should be_false
     end
   end
 
@@ -135,7 +168,7 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
 
     it "horodate en heure d'hiver hors de l'été" do
       payload = vat("vat_ca3", {"08.base" => "10"})
-      document = JSON.parse(Formats.white_label(payload, submission("vat_ca3"), credentials, Time.utc(2026, 12, 1, 8, 0)))
+      document = JSON.parse(Formats.white_label(payload, submission("vat_ca3"), credentials, Time.utc(2026, 12, 1, 8, 0), ACCOUNT))
       document["auth"]["timestamp"].as_s.should eq("2026-12-01T09:00:00")
     end
 
@@ -213,7 +246,7 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       document["identity"]["regimeFiscalTVA"]?.should be_nil
     end
 
-    it "ventile la DAS2 par nature (lettres de la DGFiP) et totalise par nature" do
+    it "déclare la DAS2 par bénéficiaire, ses natures en sous-tableau (lettres de la DGFiP), totaux par nature" do
       lines = [
         Payload::Das2Line.new("F1", "Cabinet Durand", "40483304800006", "Avocat", "3 rue des Lilas", "69003", "Lyon", "FR",
           {"fees" => "1500", "commissions" => "0", "rebates" => "300.50"}, "1800.50"),
@@ -225,9 +258,15 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       block["AA_3042_1"]?.should be_nil
       block["AA_3251_1"].as_s.should eq("69002")
       repetitions = block["repetitionDAS2TV"].as_a
-      repetitions.map { |item| {item["CA"].as_s, item["BA"].as_i} }.should eq([{"H", 1500}, {"R", 301}, {"H", 700}, {"V", 90}])
-      repetitions[2]["AF_3039_1"]?.should be_nil
-      repetitions[2]["AG_3251_1"]?.should be_nil
+      repetitions.size.should eq(2)
+      repetitions.map do |item|
+        item["repetitionDAS2MontantSommesVersees"].as_a.map { |amount| {amount["CA"].as_s, amount["BA"].as_i} }
+      end.should eq([[{"H", 1500}, {"R", 301}], [{"H", 700}, {"V", 90}]])
+      repetitions.none? { |item| item["CA"]? || item["BA"]? }.should be_true
+      # Personne morale : raison sociale et SIRET.
+      {repetitions[0]["AF_3036_1"].as_s, repetitions[0]["AF_3039_1"].as_s}.should eq({"Cabinet Durand", "40483304800006"})
+      repetitions[1]["AF_3039_1"]?.should be_nil
+      repetitions[1]["AG_3251_1"]?.should be_nil
       repetitions[0]["AH_4440_1"].as_s.should eq("Avocat")
       repetitions.map(&.["AD"].as_s).uniq!.should eq(["73282932000074"])
       totals = block["repetitionDAS2TotauxSommesVersees"].as_a.to_h { |item| {item["UA"].as_s, item["TA"].as_i} }
@@ -243,15 +282,16 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       ]
       payload = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", das2: lines)
       repetitions = white_label(payload)["DAS2"]["repetitionDAS2TV"].as_a
-      repetitions[0..1].each do |item|
-        {item["AE_3036_1"].as_s, item["AE_3036_2"].as_s, item["AI"].as_s}.should eq({"DURAND", "Paul Marie", "1971-04-02"})
-        item["AF_3036_1"]?.should be_nil
-        item["AF_3039_1"].as_s.should eq("40483304800006")
-      end
-      {repetitions[2]["AE_3036_1"].as_s, repetitions[2]["AE_3036_2"].as_s}.should eq({"MOREL", "Anne"})
-      repetitions[2]["AI"]?.should be_nil
-      repetitions[3]["AF_3036_1"].as_s.should eq("Agence Martin")
-      repetitions[3]["AE_3036_1"]?.should be_nil
+      repetitions.size.should eq(3)
+      first = repetitions[0]
+      {first["AE_3036_1"].as_s, first["AE_3036_2"].as_s, first["AI"].as_s}.should eq({"DURAND", "Paul Marie", "1971-04-02"})
+      first["AF_3036_1"]?.should be_nil
+      first["AF_3039_1"]?.should be_nil # champs de la personne morale
+      first["repetitionDAS2MontantSommesVersees"].as_a.size.should eq(2)
+      {repetitions[1]["AE_3036_1"].as_s, repetitions[1]["AE_3036_2"].as_s}.should eq({"MOREL", "Anne"})
+      repetitions[1]["AI"]?.should be_nil
+      repetitions[2]["AF_3036_1"].as_s.should eq("Agence Martin")
+      repetitions[2]["AE_3036_1"]?.should be_nil
     end
 
     it "lit un bénéficiaire préparé avant la nature de fournisseur comme une personne morale" do
@@ -279,9 +319,12 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
     it "omet les lignes d'identification vides, nettoie la balance et joint les cases de la 2035 en euros" do
       rows = [Payload::BalanceRow.new("6064", "Fournitures;bureau\nA", "120.00", "0.00", "120.00", "0.00")]
       payload = Payload.new("liasse", %w[2035], identity(legal_form: "", street: ""), "2026-01-01", "2026-12-31",
-        balance: rows, boxes: {"2035-A" => {"AA" => "1234.50", "BB" => "0"}})
-      text = Formats.liasse(payload, submission("liasse"), credentials(siret: ""), "PARTIDUO", false)
+        balance: rows, boxes: {"2035-A" => {"AA" => "1234.50", "AB" => "0"}})
+      text = Formats.liasse(payload, submission("liasse"), credentials(siret: ""), "API", false, ACCOUNT)
       lines = text.lines
+      lines.should contain("#SOURCE API")
+      lines.should contain("#EMAIL #{ACCOUNT}")
+      lines.should contain("#MOT-DE-PASSE $2a$12$empreinte")
       lines.should contain("#CATEGORIE-FISCALE BNC")
       lines.any?(&.starts_with?("#REEL-NORMAL-OU-SIMPLIFIE")).should be_false
       lines.any?(&.starts_with?("#SIRET")).should be_false
@@ -290,8 +333,18 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       lines.should contain("#AFFICHAGE-BOUTON-ENVOYER NON")
       lines.should contain("6064;Fournitures bureau A;0;0;120.00;0.00;120.00;0.00")
       zones = JSON.parse(lines.last)["zones_formulaires"]
-      zones["2035A"]["AA_2035A"].as_i.should eq(1235)
-      zones["2035A"]["BB_2035A"].as_i.should eq(0)
+      # Clé = code de la case seul (réponses de TELEDEC du 29 septembre 2026).
+      zones["2035A"].as_h.should eq({"AA" => JSON::Any.new(1235_i64), "AB" => JSON::Any.new(0_i64)})
+    end
+
+    it "refuse toute case hors du schéma relevé des formulaires (TELEDEC l'ignorerait sans erreur)" do
+      boxes = {"2035-A" => {"AA" => "1", "ZZ" => "2"}, "2065" => {"HA" => "3"}}
+      Formats.unknown_zones(boxes).should eq(["2035-A ZZ", "2065 HA"])
+      payload = Payload.new("liasse", %w[2035], identity, "2026-01-01", "2026-12-31", boxes: boxes)
+      error = expect_raises(Teledec::TransportError) { Formats.liasse_zones(payload) }
+      error.key.should eq("teledec.errors.transport.zone_unknown")
+      error.params["zones"].should eq("2035-A ZZ, 2065 HA")
+      Formats::SUFFIXED_ZONE_FORMS.should eq(%w[2065 2031])
     end
 
     it "classe la liasse d'après ses formulaires (BIC IS/IR, réel normal ou simplifié, SCI)" do
@@ -299,7 +352,7 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
                %w[2031 2050] => {"BIC-IR", "NORMAL"}, %w[2072] => {"SCI2072", nil} }
       cases.each do |forms, (category, regime)|
         payload = Payload.new("liasse", forms, identity, "2026-01-01", "2026-12-31")
-        lines = Formats.liasse(payload, submission("liasse"), credentials, "PARTIDUO", true).lines
+        lines = Formats.liasse(payload, submission("liasse"), credentials, "API", true, ACCOUNT).lines
         lines.should contain("#CATEGORIE-FISCALE #{category}")
         regime ? lines.should(contain("#REEL-NORMAL-OU-SIMPLIFIE #{regime}")) : lines.any?(&.starts_with?("#REEL")).should(be_false)
         lines.any?(&.starts_with?("{")).should be_false
@@ -329,19 +382,19 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
         .should eq("Refusé par la DGFiP")
     end
 
-    it "prend le statut des formulaires quand il tranche, garde un PDF illisible à nil, refuse un corps non objet" do
-      report = Formats.report(JSON.parse(%({"declarationId": 7, "status": "Sent", "formulairesStatus": "OK", "pdf": "%%%"})))
+    it "suit le statut de la déclaration, puis `status`, garde un PDF illisible à nil, refuse un corps non objet" do
+      report = Formats.report(JSON.parse(%({"declarationId": 7, "declarationStatus": "OK", "status": "Sent", "pdf": "%%%"})))
       report.state.should eq("acknowledged")
       report.status.should eq("OK")
       report.pdf.should be_nil
       report.declaration_id.should eq("7")
-      # Parti à la DGFiP, pas encore accepté : l'étape du rappel (`OK`) ne
-      # fait pas foi.
-      sent = Formats.report(JSON.parse(%({"formulairesStatus": "Sent", "status": "OK"})))
-      sent.status.should eq("Sent")
+      # Soumis à la DGFiP, pas encore accepté.
+      sent = Formats.report(JSON.parse(%({"declarationStatus": "SENT", "status": "OK", "formulairesStatus": "Accepted"})))
+      sent.status.should eq("SENT")
       sent.state.should eq("pending")
-      Formats.report(JSON.parse(%({"formulairesStatus": "", "status": "OK"}))).state.should eq("acknowledged")
-      Formats.report(JSON.parse(%({"formulairesStatus": "Rejected", "status": "OK"}))).state.should eq("rejected")
+      Formats.report(JSON.parse(%({"formulairesStatus": "Sent", "status": "OK"}))).state.should eq("acknowledged")
+      Formats.report(JSON.parse(%({"status": "ERREUR"}))).state.should eq("rejected")
+      Formats.report(JSON.parse(%({"formulairesStatus": "Rejected"}))).state.should eq("rejected")
       pending = Formats.report(JSON.parse(%({"status": null, "declarationStatus": "NotCompleted"})))
       pending.status.should eq("NotCompleted")
       pending.state.should eq("pending")
@@ -350,16 +403,25 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       expect_raises(Teledec::TransportError, "teledec.errors.transport.invalid") { Formats.report(JSON.parse("[1]")) }
     end
 
-    it "écarte les rappels de paiement et ceux d'un autre type de déclaration, et reconnaît un autre envoi" do
+    it "rattache un rappel à sa sorte (DAS2 `Part`, relevés d'IS `Paiement`), et reconnaît un autre envoi" do
       payment = Formats.report(JSON.parse(%({"declarationType": "Paiement", "status": "ERREUR", "reference": "r-1"})))
       payment.declaration_type.should eq("Paiement")
       payment.payment?.should be_true
       Formats.concerns?(payment, "vat_ca3").should be_false
       Formats.concerns?(payment, "das2").should be_false
+      Formats.concerns?(payment, "is_2571").should be_true
+      Formats.concerns?(payment, "is_2572").should be_true
+      Formats.concerns?(payment, nil).should be_false
       tva = Formats.report(JSON.parse(%({"declarationType": "TVA", "status": "OK"})))
       Formats.concerns?(tva, "vat_ca12").should be_true
       Formats.concerns?(tva, "liasse").should be_false
-      Formats.concerns?(tva, "das2").should be_true
+      Formats.concerns?(tva, "das2").should be_false
+      Formats.concerns?(tva, "is_2572").should be_false
+      part = Formats.report(JSON.parse(%({"declarationType": "Part", "status": "OK"})))
+      Formats.concerns?(part, "das2").should be_true
+      Formats.concerns?(part, "vat_ca3").should be_false
+      Formats.kind_of_form("DAS2").should eq("das2")
+      Formats.kind_of_form("2571").should eq("is_2571")
       Formats.concerns?(Formats.report(JSON.parse(%({"status": "OK"}))), "liasse").should be_true
       payment.stale?("r-1").should be_false
       payment.stale?("r-2").should be_true
@@ -377,7 +439,11 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
 
     it "normalise un statut : minuscules, lettres seules" do
       Formats.normalize(" Ready_To-Be Sent ").should eq("readytobesent")
-      Formats.state("complete with errors").should eq("rejected")
+      # Contrôles internes de TELEDEC avant l'envoi : pas un retour de la DGFiP.
+      Formats.state("complete with errors").should eq("pending")
+      Formats.state("CompleteWithWarnings").should eq("pending")
+      Formats.state("ERREUR").should eq("rejected")
+      Formats.state("OK").should eq("acknowledged")
       Formats.state("").should eq("pending")
     end
   end

@@ -97,16 +97,64 @@ module Teledec
 
     # Identifiants de l'API : échec `credentials.missing` s'il n'y en a pas,
     # `credentials.unreadable` si la clé enregistrée ne se déchiffre plus
-    # (clé de l'instance changée, valeur altérée).
+    # (clé de l'instance changée, valeur altérée). Crée au besoin le haché
+    # du mot de passe du compte de l'entreprise chez TELEDEC (D-TDC3-007).
     def self.credentials(settings : Settings) : Partiduo::Api::Result(Credentials)
       key = settings.api_key.to_s
       if settings.login.to_s.empty? || key.empty?
         return Partiduo::Api::Result(Credentials).failure(FieldError.base("teledec.errors.credentials.missing"))
       end
-      Partiduo::Api::Result(Credentials).success(Credentials.new(settings.login.to_s, Secrets.decrypt(key), settings.env.to_s,
-        account_email(settings.email.to_s), settings.siret.to_s))
+      api_key = Secrets.decrypt(key)
+      hash = account_password_hash
+      env = settings.env.to_s
+      Partiduo::Api::Result(Credentials).success(Credentials.new(settings.login.to_s, api_key, env,
+        account_email(settings.email.to_s), settings.siret.to_s, password_hash: hash,
+        account_ready: settings.account_env.to_s == env))
     rescue Secrets::Error
       Partiduo::Api::Result(Credentials).failure(FieldError.base("teledec.errors.credentials.unreadable"))
+    end
+
+    # Haché bcrypt du mot de passe du compte de l'entreprise chez TELEDEC,
+    # créé une fois (sous le verrou des dépôts) ; le mot de passe lui-même
+    # n'est jamais gardé.
+    def self.account_password_hash : String
+      current = Settings.current!.account_password_hash.to_s
+      return current unless current.empty?
+      created = ""
+      Partiduo::Api::Transaction.run do
+        lock!
+        settings = Settings.current!
+        if settings.account_password_hash.to_s.empty?
+          settings.account_password_hash = Remote::Account.new_password_hash
+          settings.save!
+        end
+        created = settings.account_password_hash.to_s
+        Partiduo::Api::Result(Nil).success(nil)
+      end
+      created
+    end
+
+    # Note que le compte de l'entreprise existe chez TELEDEC dans
+    # l'environnement `env` (plus de création avant la marque blanche).
+    def self.note_account(env : String) : Nil
+      Partiduo::Api::Transaction.run do
+        lock!
+        settings = Settings.current!
+        settings.account_env = env
+        settings.save!
+        Partiduo::Api::Result(Nil).success(nil)
+      end
+      nil
+    end
+
+    # Adresse du compte de l'entreprise chez TELEDEC selon le transport
+    # branché (domaine du partenaire), `nil` si elle ne peut être formée.
+    def self.account_address : String?
+      transport = Transports.current.as?(HttpTransport) || return
+      siren = Partiduo::Api::Core.settings(Builder.system).siren.delete(' ')
+      Remote::Account.email(siren, transport.user_domain, transport.user_format)
+    rescue Partiduo::Api::NotFound
+      nil
     end
 
     # Email du compte TELEDEC : celui des paramètres, sinon celui de la

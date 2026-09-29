@@ -30,8 +30,7 @@ describe "Cycle d'un dépôt : cas limites" do
     filing = S.liasse
     # Premier envoi parvenu à TELEDEC, réponse perdue : rien n'est noté dans Partiduo.
     reference = "partiduo-#{filing.id}-1-#{filing.fingerprint[0, 16]}"
-    credentials = Teledec::Credentials.new(Teledec::SimulatedTeledec::LOGIN, Teledec::SimulatedTeledec::API_KEY, "sandbox",
-      Teledec::SimulatedTeledec::EMAIL, Teledec::SimulatedTeledec::SIRET)
+    credentials = Teledec::Filings.credentials(Teledec::Settings.current!).value!
     payload = String.new(Api.export_file(S.admin, filing.id).content)
     S.teledec.submit(credentials, Teledec::Submission.new(reference, "liasse", %w[2065 2033], payload, filing.fingerprint))
       .remote_id.should eq(S::LIASSE_ID)

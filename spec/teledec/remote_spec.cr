@@ -70,8 +70,9 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     sent.remote_url.should start_with("https://stage.teledec.fr/liasse/")
     body = last_request("/service/liasse").body
     lines = body.lines
-    lines.should contain("#SOURCE PARTIDUO")
-    lines.should contain("#EMAIL #{Teledec::SimulatedTeledec::EMAIL}")
+    lines.should contain("#SOURCE API")
+    lines.should contain("#EMAIL #{Teledec::SimulatedTeledec::ACCOUNT}")
+    lines.should contain("#MOT-DE-PASSE #{Teledec::Settings.current!.account_password_hash}")
     lines.should contain("#SIRET #{Teledec::SimulatedTeledec::SIRET}")
     lines.should contain("#CATEGORIE-FISCALE BIC-IS")
     lines.should contain("#REEL-NORMAL-OU-SIMPLIFIE SIMPLIFIE")
@@ -90,14 +91,14 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     filing = S.liasse
     S.teledec.source = "INCONNUE"
     Api.transmit(S.admin, filing.id).error_keys.should eq(["teledec.errors.transport.source"])
-    S.teledec.source = "PARTIDUO"
+    S.teledec.source = "API"
     Api.save_credentials(S::SYSTEM, Api::CredentialsInput.new(Teledec::SimulatedTeledec::LOGIN, "",
       email: Teledec::SimulatedTeledec::EMAIL)).value!
     Api.transmit(S.admin, filing.id).error_keys.should eq(["teledec.errors.transport.siret"])
     S.connect
     Api.transmit(S.admin, filing.id).value!
-    Api.save_credentials(S::SYSTEM, Api::CredentialsInput.new(Teledec::SimulatedTeledec::LOGIN, "",
-      email: "autre@exemple.test", siret: Teledec::SimulatedTeledec::SIRET)).value!
+    # Autre domaine du partenaire : TELEDEC ne connaît pas ce compte.
+    Teledec::Transports.current = Teledec::SimulatedTeledec.new(S.teledec.server, user_domain: "autre.test")
     Api.refresh(S.admin, filing.id).error_keys.should eq(["teledec.errors.transport.account"])
   end
 
@@ -110,9 +111,16 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     sent.remote_url.should start_with("https://stage.teledec.fr/service/declaration/")
     sent.remote_status.should eq("readytobesent")
     document = JSON.parse(last_request("/service/declaration-marque-blanche").body)
-    document["auth"]["email"].as_s.should eq(Teledec::SimulatedTeledec::EMAIL)
+    # Compte de l'entreprise créé avant sa première déclaration en marque
+    # blanche, dans le domaine du partenaire.
+    company = JSON.parse(last_request("/service/creation-entreprise").body)
+    company["auth"]["email"].as_s.should eq(Teledec::SimulatedTeledec::ACCOUNT)
+    company["auth"]["password"].as_s.should start_with("$2a$12$")
+    S.teledec.accounts.keys.should eq([Teledec::SimulatedTeledec::ACCOUNT])
+    document["auth"]["email"].as_s.should eq(Teledec::SimulatedTeledec::ACCOUNT)
+    document["identity"]["email"].as_s.should eq(Teledec::SimulatedTeledec::EMAIL)
     document["auth"]["retournerLien"].as_bool.should be_true
-    document["auth"]["url"].as_s.should start_with("https://dossier.exemple.fr/hooks/TELEDEC/callback?token=")
+    document["auth"]["url"].as_s.should eq("https://dossier.exemple.fr/hooks/TELEDEC/callback")
     document["auth"]["timestamp"].as_s.should match(/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\z/)
     document["identity"]["siret"].as_s.should eq(Teledec::SimulatedTeledec::SIRET)
     document["identity"]["regimeFiscalTVA"].as_s.should eq("Normal")
@@ -134,9 +142,28 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     Api.refresh(S.admin, filing.id).value!.status.should eq("acknowledged")
   end
 
+  it "transmet les opérations au taux particulier de 2,10 % taux par taux, sans ligne 14" do
+    S.books
+    S.connect
+    sale
+    press = Acc::DocumentInput.new(ledger_id: Books.ledger("V01").id, date: Books.date("2026-03-12"),
+      third_party: Books.card("CUSTOMER", "Kiosque Martin").code, label: "Presse",
+      lines: [Acc::DocumentLineInput.new(amount: Books.d("500"), account: "706", vat_rate: "TP021")])
+    Acc.post_sale(S::SYSTEM, press).value!
+    created = Acc.create_vat_return(S::SYSTEM, Acc::VatReturnInput.new(form: "fr_ca3", year: 2026, periodicity: "month", number: 3)).value!
+    closed = Acc.close_vat_return(S::SYSTEM, (created.id || raise("déclaration sans identifiant")), nil).value!
+    closed.annex_lines.map(&.vat_number).should eq(["TP021"])
+    filing = S.prepare("vat_ca3", vat_return_id: closed.id)
+    filing.controls.map(&.key).should_not contain("teledec.controls.box_unmapped")
+    Api.transmit(S.admin, filing.id).value!
+    boxes = JSON.parse(last_request("/service/declaration-marque-blanche").body)["3310CA3"].as_h
+    {boxes["MF"].as_i, boxes["ME"].as_i}.should eq({500, 11}) # 2,10 % de 500 = 10,50
+    boxes["GH"].as_i.should eq(211)                           # 200 + 11
+  end
+
   it "bloque une CA3 dont une case n'a pas de code chez TELEDEC" do
     Formats.unmapped("vat_ca3", {"14.base" => "100", "08.base" => "10", "15" => "0"}, 2026).should eq(["14.base"])
-    Formats.unmapped("vat_ca12", {"A1" => "100", "08.base" => "10", "B2" => "5"}, 2026).should eq(["B2"])
+    Formats.unmapped("vat_ca12", {"A1" => "100", "08.base" => "10", "B2" => "5", "29" => "3"}, 2026).should eq(["29"])
     Formats.unmapped("das2", {"x" => "1"}, 2026).should be_empty
   end
 
@@ -151,8 +178,9 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     beneficiary = block["repetitionDAS2TV"][0]
     beneficiary["AF_3036_1"].as_s.should eq("Cabinet Durand")
     beneficiary["AF_3039_1"].as_s.should eq(S::SIRET)
-    beneficiary["CA"].as_s.should eq("H")
-    beneficiary["BA"].as_i.should eq(1212)
+    amounts = beneficiary["repetitionDAS2MontantSommesVersees"][0]
+    amounts["CA"].as_s.should eq("H")
+    amounts["BA"].as_i.should eq(1212)
     beneficiary["AG_3251_1"].as_s.should eq("69003")
     block["repetitionDAS2TotauxSommesVersees"][0]["TA"].as_i.should eq(1212)
 
@@ -169,15 +197,34 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     block["RT"].as_i.should eq(2500)
     block["PN"].as_i.should eq(6500)
     block["CA"].as_i.should eq(6500)
+
+    # Rappels et comptes-rendus : DAS2 de type `Part`, relevés d'IS de type
+    # `Paiement` (réponses de TELEDEC du 29 septembre 2026).
+    S.teledec.acknowledge("DAS2:732829320:2026-12-31")
+    (S.teledec.deposits["DAS2:732829320:2026-12-31"].report || raise "compte-rendu absent")["declarationType"].as_s.should eq("Part")
+    Api.refresh(S.admin, das2.id).value!.status.should eq("acknowledged")
+    S.teledec.acknowledge("2571:732829320:2026-12-31:2026-06-15")
+    Api.refresh(S.admin, advance.id).value!.status.should eq("acknowledged")
   end
 
-  it "refuse le dépôt au greffe, que l'API ne propose pas" do
+  it "garde en attente un dépôt que les contrôles de TELEDEC bloquent avant l'envoi" do
+    S.books
+    sale
+    S.connect
+    filing = Api.transmit(S.admin, S.liasse.id).value!
+    S.teledec.deposits[S::LIASSE_ID].status = "CompleteWithErrors"
+    checked = Api.refresh(S.admin, filing.id).value!
+    {checked.status, checked.remote_status}.should eq({"transmitted", "completewitherrors"})
+    I18n.t("teledec.remote_statuses.completewitherrors").should contain("Contrôles de TELEDEC")
+  end
+
+  it "refuse le dépôt au greffe, qui ne passe pas par l'API (redirection en marque blanche)" do
     S.books
     sale
     S.connect
     Api.update_settings(S::SYSTEM, Api::SettingsInput.new("is_rsi", "ca3_monthly", greffe: true)).value!
     filing = S.prepare("greffe", fiscal_year_id: S.fiscal_year_id)
-    Api.transmit(S.admin, filing.id).error_keys.should eq(["teledec.errors.transport.unsupported"])
+    Api.transmit(S.admin, filing.id).error_keys.should eq(["teledec.errors.transport.greffe"])
   end
 
   it "note le rejet avec les erreurs de la DGFiP, et lit les comptes-rendus à défaut du suivi" do
@@ -198,12 +245,12 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
 
   it "associe les statuts de TELEDEC aux états d'un dépôt" do
     {"NotCompleted" => "pending", "readyToBeSent" => "pending", "Sent" => "pending", "OK" => "acknowledged",
-     "Accepted" => "acknowledged", "CompleteWithWarnings" => "acknowledged", "CompleteWithErrors" => "rejected",
+     "Accepted" => "acknowledged", "CompleteWithWarnings" => "pending", "CompleteWithErrors" => "pending",
      "ERREUR" => "rejected", "Rejected" => "rejected", "inattendu" => "pending"}.each do |status, state|
       Formats.state(status).should eq(state)
     end
     body = <<-JSON
-      {"declarationId": 12, "reference": "r", "status": "OK", "formulairesStatus": "Rejected",
+      {"declarationId": 12, "reference": "r", "status": "ERREUR", "formulairesStatus": "Rejected",
        "erreurCode": "E1", "erreurLibelle": "Montant incohérent", "dateHeureDGFiP": "2027-05-10T10:30:00"}
       JSON
     report = Formats.report(JSON.parse(body))

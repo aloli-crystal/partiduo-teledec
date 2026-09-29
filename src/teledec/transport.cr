@@ -4,10 +4,14 @@ module Teledec
   # Identifiants de l'API partenaire du dossier (déchiffrés le temps d'un
   # appel, jamais journalisés) : identifiant et secret du client OAuth2
   # (`login`, `api_key`), environnement (`sandbox` : stage de TELEDEC,
-  # `production`), email du compte TELEDEC de l'entreprise (`email`,
-  # identifiant de ses déclarations chez TELEDEC) et SIRET de
-  # l'établissement déclarant (`siret`, facultatif).
-  record Credentials, login : String, api_key : String, env : String, email : String = "", siret : String = "" do
+  # `production`), email de contact de l'entreprise (`email`, rendu dans
+  # son identité), SIRET de l'établissement déclarant (`siret`,
+  # facultatif), haché bcrypt du mot de passe de son compte en marque
+  # blanche (`password_hash`) et `account_ready` (compte déjà créé chez
+  # TELEDEC dans cet environnement). L'adresse du compte est celle que
+  # l'adaptateur forme dans le domaine du partenaire (`Remote::Account`).
+  record Credentials, login : String, api_key : String, env : String, email : String = "", siret : String = "",
+    password_hash : String = "", account_ready : Bool = false do
     def to_s(io : IO) : Nil
       io << "Teledec::Credentials(" << login << ", ***, " << env << ")"
     end
@@ -30,8 +34,9 @@ module Teledec
   # Dépôt accepté par TELEDEC : `remote_id` permet d'en relever l'état,
   # `url` est la page à ouvrir par l'utilisateur pour vérifier et envoyer
   # (vide si TELEDEC n'en rend pas), `remote_status` l'état brut chez
-  # TELEDEC.
-  record Submitted, remote_id : String, url : String = "", remote_status : String = ""
+  # TELEDEC ; `account_created` : le compte de l'entreprise vient d'être
+  # créé chez TELEDEC (à noter dans les paramètres).
+  record Submitted, remote_id : String, url : String = "", remote_status : String = "", account_created : Bool = false
 
   # Accusé de réception rendu par TELEDEC (PDF, en général).
   record Receipt, filename : String, content_type : String, content : Bytes

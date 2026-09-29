@@ -169,7 +169,13 @@ module Teledec
       prepared = Partiduo::Api::Liberal.tax_return(system, year)
       controls << error("teledec.controls.liberal_not_ready", {"count" => prepared.controls.count(&.error?).to_s}) unless prepared.ready?
       details["tax_return_fingerprint"] = prepared.fingerprint
-      prepared.boxes.transform_values { |boxes| boxes.transform_values { |amount| Money.euros_text(amount) } }
+      boxes = prepared.boxes.transform_values { |values| values.transform_values { |amount| Money.euros_text(amount) } }
+      # Case hors du schéma de TELEDEC : ignorée par TELEDEC sans erreur,
+      # donc refusée ici (D-TDC3-002).
+      Remote::Formats.unknown_zones(boxes).each do |zone|
+        controls << error("teledec.controls.zone_unknown", {"zone" => zone})
+      end
+      boxes
     end
 
     # --- TVA -----------------------------------------------------------------
@@ -194,7 +200,15 @@ module Teledec
       forms = Config.forms(input.kind, "")
       # Cases arrondies à l'euro, totaux recalculés sur les cases arrondies
       # (`VatTotals`, D-TDC-026).
-      boxes = VatTotals.coherent(input.kind, view.boxes.to_h { |box| {box.code, box.amount.to_s} })
+      # Opérations aux taux particuliers : lignes de l'annexe, taux par taux
+      # (`14.<code du taux>.base|tax`, D-R5-006, D-TDC3-003).
+      raw = view.boxes.to_h { |box| {box.code, box.amount.to_s} }
+      view.annex_lines.each do |line|
+        next if line.vat_number.empty?
+        raw["14.#{line.vat_number}.base"] = line.amount.to_s
+        raw["14.#{line.vat_number}.tax"] = line.vat.to_s
+      end
+      boxes = VatTotals.coherent(input.kind, raw)
       # Cases qu'aucun code du formulaire de TELEDEC ne reçoit : la
       # déclaration serait incomplète.
       Remote::Formats.unmapped(input.kind, boxes, view.date_to.year).each do |box|

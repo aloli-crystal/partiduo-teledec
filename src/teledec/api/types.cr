@@ -34,12 +34,12 @@ module Teledec
 
     # Identifiants de l'API partenaire : identifiant et secret du client
     # OAuth2 (`login`, `api_key` ; vide garde le secret enregistré),
-    # environnement, email du compte TELEDEC de l'entreprise (vide : celui
-    # de la société) et SIRET de l'établissement déclarant (facultatif,
-    # commence par le SIREN de la société) ; `renew_callback_token` :
-    # renouvelle le jeton des rappels.
+    # environnement, email de contact de l'entreprise (vide : celui de la
+    # société ; le compte TELEDEC de l'entreprise a sa propre adresse, dans
+    # le domaine du partenaire) et SIRET de l'établissement déclarant
+    # (facultatif, commence par le SIREN de la société).
     record CredentialsInput, login : String, api_key : String, env : String = "sandbox", email : String = "",
-      siret : String = "", renew_callback_token : Bool = false
+      siret : String = ""
 
     # Issue d'un dépôt fait hors de Partiduo (repli, sur le site de
     # TELEDEC) : `transmitted`, `acknowledged` (accusé facultatif en pièce
@@ -213,10 +213,13 @@ module Teledec
     end
 
     # Paramètres ; `login`, `email`, `siret`, `callback_path` (chemin des
-    # rappels de TELEDEC, jeton compris) et `callback_url` (adresse complète
-    # des rappels sous l'adresse publique de l'instance, en https ; vide si
-    # l'hôte de l'instance est inconnu) sont vides pour qui n'a pas
-    # `teledec.settings.manage`. `accounting` : la Comptabilité est active ;
+    # rappels de TELEDEC), `callback_url` (adresse complète des rappels sous
+    # l'adresse publique de l'instance, en https ; vide si l'hôte de
+    # l'instance est inconnu ou le mot de passe des rappels non réglé) et
+    # `account_email` (adresse du compte de l'entreprise chez TELEDEC, vide
+    # si le domaine du partenaire n'est pas réglé) sont vides pour qui n'a
+    # pas `teledec.settings.manage` ; `callback_password` : mot de passe des
+    # rappels réglé dans l'instance. `accounting` : la Comptabilité est active ;
     # sinon (module `liberal` seul) `tax_system` est le régime retenu (BNC
     # si aucun n'est choisi), `kinds` ne propose que la liasse 2035 et
     # `tax_systems` que le régime BNC (DECISIONS D-TDC2-001).
@@ -237,6 +240,8 @@ module Teledec
       transport : String?,
       forms : Array(String),
       accounting : Bool = true,
+      callback_password : Bool = false,
+      account_email : String = "",
       kinds : Array(String) = Config::KINDS,
       tax_systems : Array(String) = Config::TAX_SYSTEMS
 

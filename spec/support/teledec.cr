@@ -80,6 +80,12 @@ module Teledec
       nil
     end
 
+    # En-tête `Authorization` d'un rappel de TELEDEC : mot de passe des
+    # rappels du partenaire (réglage de l'instance, D-TDC3-006).
+    def self.callback_authorization(password : String = ENV["PARTIDUO_TELEDEC_CALLBACK_PASSWORD"]) : String
+      "Basic #{Base64.strict_encode("teledec:#{password}")}"
+    end
+
     def self.connect : Nil
       Api.save_credentials(SYSTEM, Api::CredentialsInput.new(SimulatedTeledec::LOGIN, SimulatedTeledec::API_KEY,
         email: SimulatedTeledec::EMAIL, siret: SimulatedTeledec::SIRET)).value!

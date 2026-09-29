@@ -22,9 +22,16 @@ module Teledec
     # défaut : email de la société) et SIRET de l'établissement déclarant.
     field :email, :string, max_size: 255, blank: true, default: ""
     field :siret, :string, max_size: 14, blank: true, default: ""
-    # `v1:<base64>` : jeton des rappels de TELEDEC, chiffré ; créé à
-    # l'enregistrement des identifiants.
+    # Ancien jeton des rappels par entreprise : plus lu ni écrit (un mot de
+    # passe par partenaire, réglé dans l'instance, D-TDC3-006) ; vidé par
+    # la migration 0005.
     field :callback_token, :text, blank: true, default: ""
+    # Compte de l'entreprise chez TELEDEC en marque blanche (D-TDC3-007) :
+    # haché bcrypt (coût 12) de son mot de passe aléatoire, jamais le mot de
+    # passe lui-même ; environnement où le compte a été créé (vide : pas
+    # encore créé).
+    field :account_password_hash, :text, blank: true, default: ""
+    field :account_env, :string, max_size: 16, blank: true, default: ""
     field :checked_at, :date_time, blank: true, null: true
     field :updated_by_id, :big_int, blank: true, null: true
 

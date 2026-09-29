@@ -8,13 +8,16 @@ require "crypto/bcrypt/password"
 # entreprise de test, liasse d'une balance de démonstration (URL rendue),
 # TVA en marque blanche, suivi. Activée seulement si
 # `~/.config/partiduo/teledec-sandbox.env` porte `TELEDEC_SANDBOX_CLIENT_ID`
-# et `TELEDEC_SANDBOX_CLIENT_SECRET` ; ces valeurs ne sont jamais affichées,
-# journalisées ni copiées. Tout part sur le stage (`sandbox`) : rien n'est
-# transmis à la DGFiP, et la liasse est envoyée sans bouton « Envoyer ».
+# et # `TELEDEC_SANDBOX_CLIENT_SECRET` ; ces valeurs ne sont jamais affichées,
+# journalisées ni copiées. Les dépôts exigent aussi le domaine déclaré comme
+# partenaire chez TELEDEC (`PARTIDUO_TELEDEC_USER_DOMAIN`, compte de
+# l'entreprise de test en marque blanche) ; sans lui, ils restent en
+# attente. Tout part sur le stage (`sandbox`) : rien n'est transmis à la
+# DGFiP, et la liasse est envoyée sans bouton « Envoyer ».
 module Teledec::SandboxSpec
   FILE = File.join(ENV["HOME"]? || "/nonexistent", ".config/partiduo/teledec-sandbox.env")
   # Entreprise fictive (SIREN à clé valide, non attribué à notre
-  # connaissance) et compte de test sur un domaine réservé.
+  # connaissance), email de contact sur un domaine réservé.
   EMAIL = "partiduo-stage@example.org"
   SIREN = "999888779"
   SIRET = "99988877900017"
@@ -34,7 +37,19 @@ module Teledec::SandboxSpec
 
   def self.credentials(secret : String? = nil) : Credentials
     found = values || raise "identifiants du stage absents"
-    Credentials.new(found["TELEDEC_SANDBOX_CLIENT_ID"], secret || found["TELEDEC_SANDBOX_CLIENT_SECRET"], "sandbox", EMAIL, SIRET)
+    Credentials.new(found["TELEDEC_SANDBOX_CLIENT_ID"], secret || found["TELEDEC_SANDBOX_CLIENT_SECRET"], "sandbox", EMAIL, SIRET,
+      password_hash: password_hash)
+  end
+
+  # Haché du mot de passe du compte de test (un par exécution).
+  class_getter password_hash : String { Remote::Account.new_password_hash }
+
+  # Adresse du compte de l'entreprise de test ; en attente sans domaine du
+  # partenaire.
+  def self.account! : String
+    transport.account_email(SIREN)
+  rescue TransportError
+    pending!("domaine du partenaire non réglé (PARTIDUO_TELEDEC_USER_DOMAIN)")
   end
 
   def self.transport : HttpTransport
@@ -118,32 +133,26 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
                   "yearEndDay" => 31, "addressStreet" => "3 rue des Lilas", "addressPostalCode" => "69003",
                   "addressCity" => "Lyon", "addressCountry" => "FR", "legalForm" => "SAS",
                   "fullRegimeFiscal" => "ISRS", "regimeFiscalTVA" => "Normal"} of String => String | Int32
-      answer = Teledec::SandboxSpec.transport.create_company(Teledec::SandboxSpec.credentials, identity, password)
-      answer.should contain(Teledec::SandboxSpec::EMAIL)
+      account = Teledec::SandboxSpec.account!
+      answer = Teledec::SandboxSpec.transport.create_company(Teledec::SandboxSpec.credentials, identity, password, account)
+      answer.should contain(account)
     end
 
-    it "envoie la liasse d'une balance de démonstration (URL rendue), ou signale la source non reconnue" do
+    it "envoie la liasse d'une balance de démonstration (URL rendue, source `API`)" do
       Teledec::SandboxSpec.require_stage!
+      Teledec::SandboxSpec.account!
       transport = Teledec::SandboxSpec.transport
       submission = Teledec::SandboxSpec.submission(Teledec::SandboxSpec.liasse_payload)
-      if ENV["PARTIDUO_TELEDEC_SOURCE"]?.presence
-        submitted = transport.submit(Teledec::SandboxSpec.credentials, submission)
-        submitted.url.should start_with("https://stage.teledec.fr")
-        submitted.remote_id.should eq("liasse:#{Teledec::SandboxSpec::SIREN}:2025-12-31")
-      else
-        # Nom de partenaire attendu par TELEDEC dans `#SOURCE` non
-        # communiqué (BLOCAGES B-TDC-004) : TELEDEC refuse la liasse.
-        error = expect_raises(Teledec::TransportError) do
-          transport.submit(Teledec::SandboxSpec.credentials, submission)
-        end
-        error.key.should eq("teledec.errors.transport.source")
-      end
+      submitted = transport.submit(Teledec::SandboxSpec.credentials, submission)
+      submitted.url.should start_with("https://stage.teledec.fr")
+      submitted.remote_id.should eq("liasse:#{Teledec::SandboxSpec::SIREN}:2025-12-31")
       status = transport.status(Teledec::SandboxSpec.credentials, "liasse:#{Teledec::SandboxSpec::SIREN}:2025-12-31")
       status.state.should eq("pending")
     end
 
     it "dépose une CA3 en marque blanche (lien rendu), puis en relève l'état" do
       Teledec::SandboxSpec.require_stage!
+      Teledec::SandboxSpec.account!
       transport = Teledec::SandboxSpec.transport
       submission = Teledec::SandboxSpec.submission(Teledec::SandboxSpec.ca3_payload, due_on: "2026-09-19")
       submitted = transport.submit(Teledec::SandboxSpec.credentials, submission)

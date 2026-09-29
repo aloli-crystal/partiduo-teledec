@@ -41,12 +41,16 @@ describe "2035 transmise à TELEDEC (module liberal, B-TDC-004)" do
     lines.group_by { |line| {line.form, line.box} }.select { |_, same| same.size > 1 }.keys.should be_empty
   end
 
-  it "nomme les zones `<case>_<formulaire>` pour la 2035, la 2035-A et la 2035-B" do
+  it "nomme les zones de la 2035, de la 2035-A et de la 2035-B par le code de la case seul" do
     boxes = {"2035-A" => {"EB" => "120.40", "BH" => "120.40"}, "2035-B" => {"CP" => "999.50"}, "2035" => {"FJ" => "10"}}
     payload = Payload.new("liasse", %w[2035], identity, "2026-01-01", "2026-12-31", boxes: boxes)
     zones = Formats.liasse_zones(payload) || raise "zones de la liasse absentes"
-    zones["2035A"].should eq({"EB_2035A" => 120_i64, "BH_2035A" => 120_i64})
-    zones["2035B"].should eq({"CP_2035B" => 1000_i64})
-    zones["2035"].should eq({"FJ_2035" => 10_i64})
+    zones["2035A"].should eq({"EB" => 120_i64, "BH" => 120_i64})
+    zones["2035B"].should eq({"CP" => 1000_i64})
+    zones["2035"].should eq({"FJ" => 10_i64})
+  end
+
+  it "reprend dans l'adaptateur le schéma relevé des formulaires 2035 de TELEDEC" do
+    Formats::ZONE_CODES.transform_values(&.sort).should eq(TELEDEC_2035_CODES.transform_values(&.sort))
   end
 end

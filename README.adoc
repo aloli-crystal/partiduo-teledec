@@ -68,7 +68,8 @@ document intangible une fois transmis (déclencheur PostgreSQL).
 `client_credentials` en cache, liasse par l'API Balance (URL de la liasse
 rendue à l'utilisateur), TVA CA3 et CA12, DAS2, relevés 2571 et 2572 par
 l'API marque blanche, suivi (`declaration-status`, comptes-rendus), rappels
-de TELEDEC reçus sur `/hooks/TELEDEC/callback` (jeton de l'instance). TELEDEC
+de TELEDEC reçus sur `/hooks/TELEDEC/callback` (mot de passe `Basic` du
+partenaire). TELEDEC
 simulé pour les specs (mêmes échanges HTTP). En repli (transport
 désactivé) : export de la balance (CSV) et saisie de l'issue d'un dépôt
 fait sur le site de TELEDEC.
@@ -121,14 +122,58 @@ end
 
 L'adaptateur réel est branché par défaut (`Teledec::Transports.current`,
 `Teledec::HttpTransport`) ; `Teledec::Transports.current = nil` désactive la
-transmission directe. Variable d'environnement facultative :
-`PARTIDUO_TELEDEC_SOURCE` (nom de partenaire déclaré dans `#SOURCE` de la
-liasse, communiqué par TELEDEC ; défaut `PARTIDUO`). Dans les paramètres de
-TELEDEC : identifiant et secret du client OAuth2, environnement (test :
-stage, ou production), email du compte TELEDEC de l'entreprise, SIRET de
-l'établissement ; l'adresse des rappels (jeton compris, en https sous le
-domaine de la société ou `PARTIDUO_HOST`) y est affichée pour être confiée à
-TELEDEC, et le jeton peut y être renouvelé.
+transmission directe. Dans les paramètres de TELEDEC : identifiant et secret
+du client OAuth2, environnement (test : stage, ou production), email de
+contact de l'entreprise, SIRET de l'établissement ; y sont affichés
+l'adresse du compte de l'entreprise chez TELEDEC, l'adresse des rappels (en
+https sous le domaine de la société ou `PARTIDUO_HOST`) et l'état du mot de
+passe des rappels.
+
+=== Réglages de l'instance (opérateur)
+
+Réponses de TELEDEC du 29 septembre 2026 (DECISIONS D-TDC3-001 à
+D-TDC3-008) :
+
+[cols="2,5",options="header"]
+|===
+|Variable |Rôle
+
+|`PARTIDUO_TELEDEC_USER_DOMAIN`
+|*Obligatoire pour transmettre.* Le domaine déclaré comme partenaire chez
+TELEDEC. Chaque entreprise a chez TELEDEC un compte en marque blanche, créé à
+sa première transmission, dont l'adresse est dans ce domaine ; sans ce
+réglage, la transmission est refusée avec un message de configuration.
+Aucun domaine n'est écrit dans le code. Ce domaine doit appartenir à
+l'opérateur et être confirmé auprès de TELEDEC ; les courriels que TELEDEC
+pourrait envoyer aux comptes des entreprises doivent pouvoir y être reçus
+(boîte générique, redirection ou relais).
+
+|`PARTIDUO_TELEDEC_USER_FORMAT`
+|Partie locale de l'adresse du compte, `{siren}` obligatoire (défaut
+`teledec-{siren}` : une adresse stable par entreprise, sans collision). La
+boîte correspondante doit exister ou être redirigée chez l'opérateur. Le mot
+de passe du compte est aléatoire et oublié aussitôt : seul son haché bcrypt
+(coût 12) est gardé et transmis.
+
+|`PARTIDUO_TELEDEC_CALLBACK_PASSWORD`
+|Mot de passe des rappels de TELEDEC, *un par partenaire*, configuré chez
+TELEDEC : TELEDEC s'authentifie en HTTP `Basic` ; jamais journalisé ni
+affiché. Sans lui, aucun rappel n'est admis et le suivi se fait par
+« Actualiser le statut ». `PARTIDUO_TELEDEC_CALLBACK_USER` (facultatif)
+fixe l'identifiant attendu.
+
+|`PARTIDUO_TELEDEC_SOURCE`
+|Valeur de `#SOURCE` de la liasse (API Balance) ; défaut `API`, valeur
+donnée par TELEDEC.
+|===
+
+L'adresse des rappels est donnée à TELEDEC dans le champ `url` de chaque
+déclaration en marque blanche ; la liasse (API Balance) n'a pas de champ
+d'adresse : ses rappels vont à l'adresse configurée chez TELEDEC pour le
+partenaire. Le dépôt au greffe ne passe pas par l'API (parcours de
+redirection en marque blanche vers le formulaire greffe de TELEDEC, dont
+les routes ne sont pas encore documentées) : il se fait sur le site de
+TELEDEC.
 
 == Commandes
 

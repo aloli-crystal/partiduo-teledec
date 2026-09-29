@@ -22,11 +22,26 @@ module Teledec
     # cases sont seulement arrondies).
     def self.coherent(kind : String, boxes : Hash(String, String)) : Hash(String, String)
       amounts = boxes.transform_values { |text| Money.euros(Money.parse(text)) }
+      annex!(amounts)
       if totals = TOTALS[kind]?
         totals.each { |code| amounts.delete(code) }
         compute(kind, amounts)
       end
       amounts.reject { |_, value| value.zero? }.transform_values { |value| Money.euros_text(value) }
+    end
+
+    # Ligne de l'annexe (taux particuliers, `14.<taux>.base|tax`).
+    ANNEX = /\A14\.[A-Z0-9_]+\.(base|tax)\z/
+
+    # Ligne 14 reportée des lignes de l'annexe arrondies, quand il y en a
+    # (comme la Comptabilité, D-R5-006) : la ligne 14 égale la somme de ce
+    # qui part taux par taux.
+    private def self.annex!(amounts : Hash(String, BigDecimal)) : Nil
+      lines = amounts.select { |code, _| code.matches?(ANNEX) }
+      return if lines.empty?
+      amounts["14.base"] = lines.sum(Money::ZERO) { |code, value| code.ends_with?(".base") ? value : Money::ZERO }
+      amounts["14.tax"] = lines.sum(Money::ZERO) { |code, value| code.ends_with?(".tax") ? value : Money::ZERO }
+      nil
     end
 
     private def self.compute(kind : String, amounts : Hash(String, BigDecimal)) : Nil

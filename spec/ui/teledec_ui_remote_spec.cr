@@ -18,17 +18,13 @@ private def signed_in : PartiduoUi::Browser
   PartiduoUi::Accounts.signed_in
 end
 
-private def token : String
-  URI::Params.parse(URI.parse(Teledec::Api.settings(S.admin).callback_path).query.to_s)["token"]
-end
-
 describe "Écrans de l'adaptateur réel de TELEDEC" do
-  it "enregistre l'email du compte TELEDEC et le SIRET, et affiche l'adresse publique des rappels, jeton renouvelable" do
+  it "enregistre l'email de contact et le SIRET, montre le compte de l'entreprise et l'adresse publique des rappels" do
     browser = signed_in
     html = browser.get("/ext/TELEDEC/settings").html
     html.should contain(%(name="email"))
     html.should contain(%(name="siret"))
-    html.should_not contain("data-teledec-callback")
+    html.should_not contain("renew_callback_token")
     refused = browser.post("/ext/TELEDEC/settings/credentials", {"login" => Sim::LOGIN, "api_key" => Sim::API_KEY,
                                                                  "env" => "sandbox", "email" => "pas-un-email", "siret" => "123"})
     refused.status.should eq(422)
@@ -41,15 +37,15 @@ describe "Écrans de l'adaptateur réel de TELEDEC" do
     html.should contain(%(value="#{Sim::EMAIL}"))
     html.should contain(%(value="73282932000074"))
     html.should contain("data-teledec-callback")
-    html.should contain(%(value="#{PUBLIC}/hooks/TELEDEC/callback?token=#{token}"))
+    html.should contain(%(value="#{PUBLIC}/hooks/TELEDEC/callback"))
     html.should_not contain("127.0.0.1:8000/hooks")
-    html.should contain("data-teledec-renew-token")
-    before = token
-    browser.post("/ext/TELEDEC/settings/credentials", {"login" => Sim::LOGIN, "api_key" => "", "env" => "sandbox",
-                                                       "email" => Sim::EMAIL, "siret" => Sim::SIRET,
-                                                       "renew_callback_token" => "1"}).status.should eq(302)
-    token.should_not eq(before)
-    browser.get("/ext/TELEDEC/settings").html.should contain(%(value="#{PUBLIC}/hooks/TELEDEC/callback?token=#{token}"))
+    html.should contain(Sim::ACCOUNT)
+    html.should contain("data-teledec-callback-ready")
+    # Domaine du partenaire non réglé : signalé.
+    Teledec::Transports.current = Sim.new(user_domain: nil)
+    html = browser.get("/ext/TELEDEC/settings").html
+    html.should contain("data-teledec-no-domain")
+    html.should contain("PARTIDUO_TELEDEC_USER_DOMAIN")
   end
 
   it "signale l'absence d'adresse publique en https au lieu d'afficher une adresse de rappel" do
@@ -79,7 +75,7 @@ describe "Écrans de l'adaptateur réel de TELEDEC" do
     browser.get(url).html.should_not contain("data-teledec-open")
     browser.post("#{url}/transmit", headers: HOST).status.should eq(302)
     document = JSON.parse(S.teledec.requests.reverse.find!(&.path.==("/service/declaration-marque-blanche")).body)
-    document["auth"]["url"].as_s.should eq("#{PUBLIC}/hooks/TELEDEC/callback?token=#{token}")
+    document["auth"]["url"].as_s.should eq("#{PUBLIC}/hooks/TELEDEC/callback")
     html = browser.get(url).html
     html.should contain(%(data-teledec-remote-status="readytobesent"))
     html.should contain(%(data-teledec-open))
@@ -99,7 +95,7 @@ describe "Écrans de l'adaptateur réel de TELEDEC" do
     html.should contain(%(data-teledec-remote-status="étrange"))
   end
 
-  it "refuse un rappel au jeton faux ou à l'en-tête Basic illisible, en demandant l'authentification" do
+  it "refuse un rappel au mot de passe faux ou à l'en-tête Basic illisible, en demandant l'authentification" do
     signed_in
     S.connect
     client = Marten::Spec::Client.new
@@ -109,16 +105,17 @@ describe "Écrans de l'adaptateur réel de TELEDEC" do
       response.status.should eq(401)
       response.headers["WWW-Authenticate"].should contain("Basic")
     end
-    client.post("/hooks/TELEDEC/callback", query_params: {"token" => "faux"}, content_type: "application/json", data: "{}")
-      .status.should eq(401)
+    client.post("/hooks/TELEDEC/callback", query_params: {"token" => ENV["PARTIDUO_TELEDEC_CALLBACK_PASSWORD"]},
+      content_type: "application/json", data: "{}").status.should eq(401)
     # Corps annoncé trop gros : 413, sans le lire (requête construite à la
     # main : le client des specs recalcule `Content-Length`).
     headers = ::HTTP::Headers{"Host" => "127.0.0.1", "Content-Type" => "application/json",
                               "Content-Length" => (Teledec::Callbacks::MAX_BYTES + 1).to_s}
-    raw = ::HTTP::Request.new("POST", "/hooks/TELEDEC/callback?token=#{token}", headers, IO::Memory.new("{}"))
+    headers["Authorization"] = S.callback_authorization
+    raw = ::HTTP::Request.new("POST", "/hooks/TELEDEC/callback", headers, IO::Memory.new("{}"))
     Teledec::Ui::CallbackHandler.new(Marten::HTTP::Request.new(raw)).dispatch.status.should eq(413)
-    # Jeton juste, rappel sans dépôt correspondant : 200 (rien à faire).
-    client.post("/hooks/TELEDEC/callback", query_params: {"token" => token}, content_type: "application/json",
-      data: %({"reference": "inconnue", "status": "OK"})).status.should eq(200)
+    # Mot de passe juste, rappel sans dépôt correspondant : 200 (rien à faire).
+    client.post("/hooks/TELEDEC/callback", content_type: "application/json",
+      data: %({"reference": "inconnue", "status": "OK"}), headers: {"Authorization" => S.callback_authorization}).status.should eq(200)
   end
 end

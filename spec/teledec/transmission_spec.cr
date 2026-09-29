@@ -27,7 +27,7 @@ describe "Transmission et suivi des dépôts (ADR-007 D4)" do
     deposit.form.should eq("liasse")
     deposit.reference.should eq("partiduo-#{filing.id}-1-#{filing.fingerprint[0, 16]}")
     deposit.env.should eq("stage")
-    deposit.email.should eq(Teledec::SimulatedTeledec::EMAIL)
+    deposit.email.should eq(Teledec::SimulatedTeledec::ACCOUNT)
     # Pas encore d'accusé : l'utilisateur complète et envoie sur TELEDEC.
     pending = Api.refresh(S.admin, filing.id).value!
     pending.status.should eq("transmitted")

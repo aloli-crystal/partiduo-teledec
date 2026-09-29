@@ -16,8 +16,10 @@ private def credentials_input(email : String = Sim::EMAIL, siret : String = Sim:
   Api::CredentialsInput.new(Sim::LOGIN, key, email: email, siret: siret)
 end
 
-private def token : String
-  URI::Params.parse(URI.parse(Api.settings(S.admin).callback_path).query.to_s)["token"]
+# En-tête `Authorization` d'un rappel de TELEDEC : mot de passe des rappels
+# du partenaire (réglage de l'instance, D-TDC3-006).
+private def token(password : String = ENV["PARTIDUO_TELEDEC_CALLBACK_PASSWORD"]) : String
+  "Basic #{Base64.strict_encode("teledec:#{password}")}"
 end
 
 private def transmitted_liasse : Api::FilingView
@@ -35,7 +37,7 @@ rescue ex : PQ::PQError
 end
 
 describe "Contrat de l'adaptateur réel de TELEDEC (compte, SIRET, rappels)" do
-  it "contrôle l'email du compte TELEDEC et le SIRET, retire les espaces du SIRET" do
+  it "contrôle l'email de contact et le SIRET, retire les espaces du SIRET" do
     S.books
     refused = Api.save_credentials(S::SYSTEM, credentials_input(email: "pas-un-email", siret: "1234"))
     refused.error_keys.should eq(["teledec.errors.credentials.email", "teledec.errors.credentials.siret"])
@@ -55,46 +57,66 @@ describe "Contrat de l'adaptateur réel de TELEDEC (compte, SIRET, rappels)" do
     saved.siret.should eq("73282932000074")
   end
 
-  it "crée le jeton des rappels une seule fois et ne le montre qu'aux gestionnaires" do
+  it "authentifie les rappels par le mot de passe du partenaire, réglé dans l'instance" do
     S.books
-    Api.settings(S.admin).callback_path.should eq("")
     S.connect
-    first = token
-    first.size.should be >= 40
-    Api.settings(S.admin).callback_path.should eq("#{Api::CALLBACK_PATH}?token=#{first}")
-    S.connect
-    Api.clear_credentials(S.admin)
-    token.should eq(first)
-    # Renouvelé à la demande : l'ancien jeton ne vaut plus.
-    Api.save_credentials(S::SYSTEM, credentials_input.copy_with(renew_callback_token: true)).value!
-    renewed = token
-    renewed.should_not eq(first)
-    Api.callback(first, "{}").should eq("unauthorized")
-    Api.callback(renewed, "{}").should eq("ignored")
-    first = renewed
+    view = Api.settings(S.admin)
+    {view.callback_path, view.callback_password, view.account_email}
+      .should eq({Api::CALLBACK_PATH, true, Sim::ACCOUNT})
+    Api.callback(token, "{}").should eq("ignored")
+    Api.callback(token("faux"), "{}").should eq("unauthorized")
+    Api.callback("Bearer #{ENV["PARTIDUO_TELEDEC_CALLBACK_PASSWORD"]}", "{}").should eq("unauthorized")
+    # Identifiant exigé s'il est réglé.
+    ENV["PARTIDUO_TELEDEC_CALLBACK_USER"] = "teledec-rappels"
+    begin
+      Api.callback(token, "{}").should eq("unauthorized")
+      header = "Basic #{Base64.strict_encode("teledec-rappels:#{ENV["PARTIDUO_TELEDEC_CALLBACK_PASSWORD"]}")}"
+      Api.callback(header, "{}").should eq("ignored")
+    ensure
+      ENV.delete("PARTIDUO_TELEDEC_CALLBACK_USER")
+    end
+    # Sans mot de passe réglé : aucun rappel admis, aucune adresse donnée.
+    password = ENV.delete("PARTIDUO_TELEDEC_CALLBACK_PASSWORD") || raise "mot de passe des rappels absent"
+    begin
+      Api.callback(token(password), "{}").should eq("unauthorized")
+      Api.callback("Basic #{Base64.strict_encode("teledec:")}", "{}").should eq("unauthorized")
+      Teledec::Callbacks.url("https://dossier.exemple.fr").should be_nil
+      Api.settings(S.admin).callback_password.should be_false
+    ensure
+      ENV["PARTIDUO_TELEDEC_CALLBACK_PASSWORD"] = password
+    end
     reader = S.admin([Api::READ])
     view = Api.settings(reader)
-    {view.callback_path, view.email, view.siret, view.login}.should eq({"", "", "", ""})
-    # Chiffré en base : le jeton n'y apparaît pas en clair.
+    {view.callback_path, view.email, view.siret, view.login, view.account_email}.should eq({"", "", "", "", ""})
+    # L'ancien jeton par entreprise n'est plus écrit.
     stored = Marten::DB::Connection.default.open(&.scalar("SELECT callback_token FROM teledec_settings")).as(String)
-    stored.should_not contain(first)
-    stored.should_not be_empty
+    stored.should be_empty
   end
 
-  it "prend l'email de la société quand celui du compte TELEDEC est vide" do
+  it "crée le compte de l'entreprise dans le domaine du partenaire, avec le seul haché du mot de passe" do
     S.books
     sale
     Api.save_credentials(S::SYSTEM, credentials_input(email: "")).value!.email.should eq("")
     filing = S.liasse
-    # Ni compte TELEDEC ni email de la société : rien n'est envoyé.
-    Api.transmit(S.admin, filing.id).error_keys.should eq(["teledec.errors.transport.email"])
+    # Sans domaine du partenaire : rien n'est envoyé, message de configuration.
+    Teledec::Transports.current = Sim.new(user_domain: nil)
+    Api.transmit(S.admin, filing.id).error_keys.should eq(["teledec.errors.transport.user_domain"])
+    I18n.t("teledec.errors.transport.user_domain").should contain("PARTIDUO_TELEDEC_USER_DOMAIN")
     S.teledec.requests.none?(&.path.==("/service/liasse")).should be_true
-    company = Partiduo::Api::Core.settings(S::SYSTEM).to_input.copy_with(email: Sim::EMAIL)
-    Partiduo::Api::Core.update_settings(S::SYSTEM, company).value!
-    # L'email de la société est dans le document : il se prépare de nouveau.
-    Api.transmit(S.admin, filing.id).error_keys.should eq(["teledec.errors.filing.changed"])
-    Api.transmit(S.admin, S.liasse.id).value!.status.should eq("transmitted")
-    S.teledec.requests.reverse_each.find!(&.path.==("/service/liasse")).body.lines.should contain("#EMAIL #{Sim::EMAIL}")
+    Api.settings(S.admin).account_email.should eq("")
+    Teledec::Transports.current = Sim.new
+    Api.transmit(S.admin, filing.id).value!.status.should eq("transmitted")
+    lines = S.teledec.requests.reverse_each.find!(&.path.==("/service/liasse")).body.lines
+    lines.should contain("#EMAIL #{Sim::ACCOUNT}")
+    hash = Teledec::Settings.current!.account_password_hash.to_s
+    hash.should start_with("$2a$12$")
+    lines.should contain("#MOT-DE-PASSE #{hash}")
+    S.teledec.accounts[Sim::ACCOUNT].should eq(hash)
+    Teledec::Settings.current!.account_env.should eq("sandbox")
+    # Format réglable, `{siren}` obligatoire.
+    Teledec::Remote::Account.email("732829320", "exemple.test", "tdc+{siren}").should eq("tdc+732829320@exemple.test")
+    Teledec::Remote::Account.format("sans-siren").should be_nil
+    Teledec::Remote::Account.domain("pas un domaine").should be_nil
   end
 
   it "exige le droit de transmettre, et garde le dépôt préparé si TELEDEC refuse l'envoi" do
@@ -116,13 +138,13 @@ describe "Contrat de l'adaptateur réel de TELEDEC (compte, SIRET, rappels)" do
 
   it "ne donne l'adresse des rappels à TELEDEC qu'en https, sous l'adresse publique de l'instance" do
     S.books
-    Teledec::Callbacks.url.should be_nil # pas encore de jeton
     S.connect
     path = Api.settings(S.admin).callback_path
+    path.should eq("/hooks/TELEDEC/callback")
     Teledec::Callbacks.url(nil).should be_nil
     Teledec::Callbacks.url("").should be_nil
     Teledec::Callbacks.url("ftp://dossier.exemple.fr").should be_nil
-    # Jamais en clair : le jeton circulerait sans chiffrement.
+    # Jamais en clair : le mot de passe `Basic` circulerait sans chiffrement.
     Teledec::Callbacks.url("http://localhost:8000").should be_nil
     Teledec::Callbacks.url("https://dossier.exemple.fr/").should eq("https://dossier.exemple.fr#{path}")
     # Par défaut : domaine de la société (réglage de l'instance), pas la requête.
@@ -239,7 +261,7 @@ describe "Contrat de l'adaptateur réel de TELEDEC (compte, SIRET, rappels)" do
     transmitted_liasse
     Api.callback(token, "[1, 2]").should eq("invalid")
     Api.callback(token, " " * (Teledec::Callbacks::MAX_BYTES + 1)).should eq("invalid")
-    Api.callback("#{token}x", "{}").should eq("unauthorized")
+    Api.callback(token("#{ENV["PARTIDUO_TELEDEC_CALLBACK_PASSWORD"]}x"), "{}").should eq("unauthorized")
     Api.callback("", "{}").should eq("unauthorized")
   end
 

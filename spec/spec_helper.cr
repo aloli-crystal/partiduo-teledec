@@ -4,6 +4,10 @@ ENV["MARTEN_ENV"] = "test"
 # La Comptabilité seule (dépendance de l'extension) ; les exemples qui en
 # ont besoin activent `liberal` par le contrat.
 ENV["PARTIDUO_MODULES"] ||= "accounting"
+# Mot de passe des rappels du partenaire (réglage de l'instance, D-TDC3-006) :
+# valeur de test ; les exemples qui en éprouvent l'absence le retirent.
+ENV["PARTIDUO_TELEDEC_CALLBACK_PASSWORD"] = "rappels-de-test-0123456789"
+ENV.delete("PARTIDUO_TELEDEC_CALLBACK_USER")
 
 require "spec"
 

@@ -130,11 +130,6 @@ module Teledec
         settings.env = input.env
         settings.email = email
         settings.siret = siret
-        # Jeton des rappels : créé une fois, renouvelé à la demande (l'ancien
-        # cesse aussitôt de valoir : adresse à redonner à TELEDEC).
-        if settings.callback_token.to_s.empty? || input.renew_callback_token
-          settings.callback_token = Secrets.encrypt(Callbacks.new_token)
-        end
         settings.checked_at = checked
         settings.updated_by_id = actor.user_id
         settings.save!
@@ -267,6 +262,7 @@ module Teledec
         note_error(id, ex.key, actor, event: true)
         return Result(FilingView).failure(FieldError.base(ex.key, ex.params))
       end
+      Filings.note_account(credentials.env) if submitted.account_created
       remote_id = submitted.remote_id
       recorded = Partiduo::Api::Transaction.run do
         Filings.lock!
@@ -353,14 +349,14 @@ module Teledec
     end
 
     # Rappel de TELEDEC (webhook, `POST` de `Callbacks::PATH`) : pas
-    # d'acteur, l'appel est authentifié par le jeton des rappels
-    # (`presented`, en `Basic`, `Bearer` ou paramètre `token`). Rend
-    # `unauthorized`, `invalid` (corps illisible), `ignored` (aucun dépôt
-    # ne correspond) ou `ok` ; idempotent sur l'identifiant de la
+    # d'acteur, l'appel est authentifié par le mot de passe des rappels du
+    # partenaire, en `Basic` (`authorization` : en-tête `Authorization`).
+    # Rend `unauthorized`, `invalid` (corps illisible), `ignored` (aucun
+    # dépôt ne correspond) ou `ok` ; idempotent sur l'identifiant de la
     # déclaration. `ModuleDisabled` si l'extension est inactive.
-    def self.callback(presented : String?, body : String) : String
+    def self.callback(authorization : String?, body : String) : String
       raise Partiduo::Api::ModuleDisabled.new(MODULE_CODE) unless Callbacks.active?
-      return "unauthorized" unless Callbacks.authenticate(presented)
+      return "unauthorized" unless Callbacks.authenticate(authorization)
       Callbacks.receive(body)
     end
 
@@ -532,8 +528,10 @@ module Teledec
         login: manager ? settings.login.to_s : "",
         email: manager ? settings.email.to_s : "",
         siret: manager ? settings.siret.to_s : "",
-        callback_path: manager ? Callbacks.path(settings).to_s : "",
+        callback_path: manager ? Callbacks::PATH : "",
         callback_url: manager ? Callbacks.url.to_s : "",
+        callback_password: Callbacks.configured?,
+        account_email: manager ? Filings.account_address.to_s : "",
         key_stored: !settings.api_key.to_s.empty?,
         checked_at: settings.checked_at,
         transport: Transports.current.try(&.name),
