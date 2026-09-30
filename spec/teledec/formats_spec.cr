@@ -252,7 +252,8 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
           {"fees" => "1500", "commissions" => "0", "rebates" => "300.50"}, "1800.50"),
         Payload::Das2Line.new("F2", "Agence Martin", "", "", "", "", "", "FR", {"fees" => "700", "other" => "90"}, "790"),
       ]
-      payload = Payload.new("das2", %w[DAS2], identity(street: ""), "2026-01-01", "2026-12-31", das2: lines)
+      payload = Payload.new("das2", %w[DAS2], identity(street: ""), "2026-01-01", "2026-12-31", das2: lines,
+        details: {"tax_system" => "is_rsi"})
       block = white_label(payload)["DAS2"]
       block["AE"].as_s.should eq("73282932000074")
       block["AA_3042_1"]?.should be_nil
@@ -280,7 +281,8 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
         Payload::Das2Line.new("F3", "MOREL Anne", "", "", "", "", "", "FR", {"fees" => "900"}, "900", true, "MOREL", "Anne"),
         Payload::Das2Line.new("F2", "Agence Martin", "", "", "", "", "", "FR", {"fees" => "700"}, "700"),
       ]
-      payload = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", das2: lines)
+      payload = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", das2: lines,
+        details: {"tax_system" => "is_rsi"})
       repetitions = white_label(payload)["DAS2"]["repetitionDAS2TV"].as_a
       repetitions.size.should eq(3)
       first = repetitions[0]
@@ -292,6 +294,36 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       repetitions[1]["AI"]?.should be_nil
       repetitions[2]["AF_3036_1"].as_s.should eq("Agence Martin")
       repetitions[2]["AE_3036_1"]?.should be_nil
+    end
+
+    it "joint à la DAS2 le formulaire principal du régime, vide ; sans régime connu, refuse" do
+      lines = [Payload::Das2Line.new("F2", "Agence Martin", "", "", "", "", "", "FR", {"fees" => "700"}, "700")]
+      {"is_rsi" => "2065", "is_rn" => "2065", "bic_rsi" => "2031", "bnc" => "2035", "sci" => "2072S"}.each do |system, form|
+        payload = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", das2: lines,
+          details: {"tax_system" => system})
+        document = white_label(payload)
+        document[form].as_h.should be_empty
+        (document.as_h.keys - %w[auth identity period]).sort.should eq(["DAS2", form].sort)
+      end
+      {({} of String => String), {"tax_system" => "lmnp"}}.each do |details|
+        payload = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", das2: lines, details: details)
+        expect_raises(Teledec::TransportError, "teledec.errors.transport.das2_regime") { white_label(payload) }
+      end
+      # Les autres dépôts n'ont que leur formulaire.
+      document = white_label(vat("vat_ca3", {"08.base" => "100", "08.tax" => "20", "32" => "20"}))
+      (document.as_h.keys - %w[auth identity period]).should eq(["3310CA3"])
+    end
+
+    it "donne à l'entreprise créée son régime fiscal et son régime de TVA quand le document les porte" do
+      year_end = Time.utc(2026, 12, 31)
+      liasse = Payload.new("liasse", %w[2065 2050], identity, "2026-01-01", "2026-12-31")
+      Formats.company_identity(liasse, credentials, year_end)["fullRegimeFiscal"].should eq("ISRN")
+      ca3 = vat("vat_ca3", {"32" => "0"}, periodicity: "quarter")
+      created = Formats.company_identity(ca3, credentials, year_end)
+      created["regimeFiscalTVA"].should eq("NormalTrimestriel")
+      created.has_key?("fullRegimeFiscal").should be_false
+      das2 = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", details: {"tax_system" => "bic_rsi"})
+      Formats.company_identity(das2, credentials, year_end)["fullRegimeFiscal"].should eq("BICRS")
     end
 
     it "lit un bénéficiaire préparé avant la nature de fournisseur comme une personne morale" do

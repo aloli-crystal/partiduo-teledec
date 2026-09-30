@@ -10,8 +10,10 @@ module Teledec
   # jeton OAuth2 (`Basic`, scopes, expiration, 401), API Balance
   # (identification `#CLE valeur`, balance à huit colonnes, source
   # reconnue, URL rendue), marque blanche (horodatage de moins d'une heure,
-  # lien rendu), suivi (`declaration-status`, comptes-rendus, 404 sans
-  # déclaration, email inconnu), création d'entreprise (mot de passe bcrypt)
+  # lien rendu, formulaire principal du régime exigé), suivi
+  # (`declaration-status`, comptes-rendus, 404 sans déclaration, compte
+  # inconnu), création d'entreprise (mot de passe bcrypt ; seule à créer le
+  # compte)
   # et corps des rappels. Aucun appel réseau. Domaine des comptes en marque
   # blanche : `partiduo.test` (fictif, jamais résolu).
   class SimulatedTeledec < HttpTransport
@@ -50,6 +52,16 @@ module Teledec
       SOURCE = "API"
       BASE   = {"stage.teledec.fr" => "stage", "www.teledec.fr" => "prod"}
       PDF    = "%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n"
+      # Formulaires principaux qui identifient le régime de l'entreprise
+      # (TVA, paiement, liasse) : un dépôt en marque blanche sans aucun
+      # d'eux — une DAS2 seule — est refusé, avec le message du stage
+      # (DECISIONS D-TDC5-001).
+      REGIME_FORMS   = %w[3310CA3 3517SCA12 3514 3519 3517BCA12A 3517DDR 2571 2572 2573 2065 2031 2035 2036 2072S]
+      NO_REGIME_FORM = "aucun formulaire de TVA ou de paiement ou de liasse n'a été trouvé dans le message envoyé " \
+                       "depuis votre logiciel de comptabilité. Un des formulaires principaux permettant " \
+                       "l'identification du régime de l'entreprise n'est pas présent, veuillez en saisir un dans " \
+                       "votre payload. ISRN : 3310CA3, 3514, 3519…"
+      UNKNOWN_USER = "Utilisateur non trouvé pour l'email fourni"
 
       # Déclaration reçue : clé de suivi (`<formulaire>:<siren>:<fin>[:<échéance>]`),
       # sorte (`liasse` ou formulaire de la marque blanche), référence du
@@ -199,9 +211,11 @@ module Teledec
         siret = fields["SIRET"]?.to_s
         finish = fields["EXERCICE-DATE-FIN"]?.to_s
         return text(500, "erreur technique interne") unless siret.matches?(/\A\d{14}\z/) && finish.matches?(/\A\d{8}\z/)
+        # La liasse ne crée pas le compte de l'entreprise (constaté sur le
+        # stage : suivi « Utilisateur non trouvé » après la liasse d'une
+        # entreprise sans compte, D-TDC5-002).
         if password = fields["MOT-DE-PASSE"]?
           return text(500, "erreur 101 : mot de passe non chiffré") unless password.starts_with?("$2")
-          accounts[email] = password
         end
         # Liasse sans balance (2035 d'un libéral sans Comptabilité, D-TDC2-002) :
         # admise si elle porte des zones de formulaires (supposé, B-TDC-004).
@@ -227,6 +241,7 @@ module Teledec
         period = document["period"]?.try(&.as_h?) || return json(400, {"message" => "period absent"})
         form = (Remote::Formats::FORM_KEYS.values - ["liasse"]).find { |name| document.has_key?(name) } ||
                return json(400, {"message" => "formulaire absent"})
+        return json(400, {"message" => NO_REGIME_FORM}) unless REGIME_FORMS.any? { |name| document.has_key?(name) }
         if form == "DAS2" && (invalid = das2_invalid(document["DAS2"]))
           return json(400, {"message" => invalid})
         end
@@ -247,10 +262,9 @@ module Teledec
 
       private def status(request : Remote::Request) : Remote::Response
         params = request.query_params
+        return text(400, UNKNOWN_USER) unless accounts.has_key?(params["email"]?.to_s)
         deposit = lookup(params["formulaire"]?, params["siren"]?, params["date_fin"]?, params["date_echeance"]?)
-        if deposit && deposit.email != params["email"]?
-          return text(400, "Utilisateur non trouvé pour l'email fourni")
-        end
+        return text(400, UNKNOWN_USER) if deposit && deposit.email != params["email"]?
         return json(404, {"message" => "declaration not found", "status" => "ERREUR"}) unless deposit
         answer = {"status" => JSON::Any.new(deposit.status)}
         if reports_in_status?

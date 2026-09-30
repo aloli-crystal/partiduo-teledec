@@ -61,7 +61,7 @@ module Teledec
       when "vat_ca3", "vat_ca12"
         vat(input, company, settings)
       when "das2"
-        das2(input, company, settings)
+        das2(input, company, settings, tax_system)
       else
         fiscal_year = input.fiscal_year_id.try { |id| find_fiscal_year(id) }
         return failure.call("fiscal_year_id", "teledec.errors.fiscal_year.unknown") if fiscal_year.nil? || fiscal_year.starts_on.nil? || fiscal_year.ends_on.nil?
@@ -225,11 +225,15 @@ module Teledec
 
     # --- DAS2 ----------------------------------------------------------------
 
-    private def self.das2(input, company, settings) : Partiduo::Api::Result(Built)
+    # Le régime d'imposition est noté dans le document (`tax_system`) : la
+    # DAS2 part jointe au formulaire principal de la liasse du régime, que
+    # TELEDEC exige pour identifier l'entreprise (DECISIONS D-TDC5-001).
+    private def self.das2(input, company, settings, tax_system) : Partiduo::Api::Result(Built)
       year = input.year || return Partiduo::Api::Result(Built).failure(FieldError.new("year", "teledec.errors.year.blank"))
       unless YEARS.includes?(year)
         return Partiduo::Api::Result(Built).failure(FieldError.new("year", "teledec.errors.year.invalid"))
       end
+      return Partiduo::Api::Result(Built).failure(FieldError.base("teledec.errors.settings.tax_system")) if tax_system.empty?
       controls = identity_controls(company)
       result = Das2.compute(year, Filings.das2_accounts(settings), settings.das2_threshold || Config::DAS2_THRESHOLD)
       lines = result.beneficiaries.map do |item|
@@ -265,7 +269,7 @@ module Teledec
       starts_on, ends_on = Time.utc(year, 1, 1), Time.utc(year, 12, 31)
       forms = Config.forms("das2", "")
       payload = Payload.new("das2", forms, identity(company), day(starts_on), day(ends_on), 0, nil, nil, nil, lines,
-        {"threshold" => Money.euros_text(settings.das2_threshold || Config::DAS2_THRESHOLD)})
+        {"threshold" => Money.euros_text(settings.das2_threshold || Config::DAS2_THRESHOLD), "tax_system" => tax_system})
       Partiduo::Api::Result(Built).success(Built.new("das2:#{year}", "das2", forms, fiscal_year_for(ends_on).try(&.id),
         year, 0, starts_on, ends_on, Calendar.das2(year), nil, payload, controls))
     end

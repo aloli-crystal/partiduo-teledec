@@ -113,6 +113,7 @@ en:
         unsupported: "TELEDEC does not offer this return through its API: file it on the TELEDEC website."
         siret: "Enter the SIRET of the establishment in the TELEDEC settings: TELEDEC attaches the tax return to it."
         das2_nature: "Remuneration type \"%{nature}\" has no DAS2 letter: fix the DAS2 accounts and prepare again."
+        das2_regime: "Unknown tax system for the DAS2: TELEDEC requires the main form of the tax system. Choose the tax system in the TELEDEC settings and prepare again."
         user_domain: "Partner domain not set on this instance (PARTIDUO_TELEDEC_USER_DOMAIN): the company's TELEDEC account cannot be formed. Ask the operator to set it."
         password: "The password of the company's TELEDEC account is absent or unreadable: try again."
         greffe: "Filing with the commercial court registry does not go through the TELEDEC API (redirection flow not yet connected): file it on the TELEDEC website."

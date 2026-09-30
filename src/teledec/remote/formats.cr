@@ -20,7 +20,9 @@ module Teledec
     #   seul, sauf 2065 et 2031 : `HA_2065`).
     # * TVA, DAS2, IS : API marque blanche
     #   (`POST /service/declaration-marque-blanche`), JSON `auth`,
-    #   `identity`, `period` et un bloc par formulaire en clés/valeurs.
+    #   `identity`, `period` et un bloc par formulaire en clés/valeurs ; la
+    #   DAS2 est jointe au formulaire principal de la liasse du régime,
+    #   vide (le stage refuse une DAS2 seule, D-TDC5-001).
     module Formats
       # Formulaire principal de chaque sorte, tel que TELEDEC le nomme
       # (bloc de la marque blanche, paramètre `formulaire` du suivi).
@@ -132,6 +134,27 @@ module Teledec
         "GIE" => "GIE", "INDIVISION" => "IND", "LMNP" => "LMNP", "SA" => "SA", "SAS" => "SAS", "SASU" => "SASU",
         "SARL" => "SRL", "SCEA" => "SEA", "SCI" => "SCI", "SCM" => "SCM", "SELARL" => "SLR", "SCS" => "SCS",
         "SNC" => "SNC",
+      }
+
+      # Régime d'imposition du dossier (`Config::FORMS`) → formulaire
+      # principal de sa liasse dans la marque blanche, qui identifie le
+      # régime de l'entreprise chez TELEDEC. Une DAS2 seule est refusée par
+      # le stage (« Un des formulaires principaux permettant
+      # l'identification du régime de l'entreprise n'est pas présent ») :
+      # elle part jointe au formulaire principal de la liasse, sans aucune
+      # valeur (DECISIONS D-TDC5-001).
+      REGIME_FORMS = {
+        "is_rsi" => "2065", "is_rn" => "2065", "bic_rsi" => "2031", "bic_rn" => "2031", "bnc" => "2035",
+        "sci" => "2072S",
+      }
+
+      # Régime d'imposition du dossier → régime fiscal complet de TELEDEC
+      # (`fullRegimeFiscal` de `creation-entreprise`, défaut `ISRS` chez
+      # TELEDEC) : l'entreprise créée avant un dépôt porte son vrai régime
+      # (D-TDC5-002).
+      FULL_REGIMES = {
+        "is_rsi" => "ISRS", "is_rn" => "ISRN", "bic_rsi" => "BICRS", "bic_rn" => "BICRN", "bnc" => "BNC",
+        "sci" => "RF72S",
       }
 
       # Catégorie fiscale et régime de la liasse, d'après ses formulaires.
@@ -342,8 +365,29 @@ module Teledec
               end
             end
             json.field form, block
+            # DAS2 : formulaire principal du régime, vide (D-TDC5-001).
+            if payload.kind == "das2"
+              regime = regime_form(payload) || raise TransportError.new("teledec.errors.transport.das2_regime")
+              json.field regime, {} of String => String
+            end
           end
         end
+      end
+
+      # Régime d'imposition du dossier : celui noté dans le document
+      # (`details["tax_system"]`, DAS2), sinon celui des formulaires d'une
+      # liasse ; `nil` s'il est inconnu.
+      def self.tax_system(payload : Payload) : String?
+        noted = payload.details["tax_system"]?.presence
+        return noted if noted && REGIME_FORMS.has_key?(noted)
+        Config::FORMS.key_for?(payload.forms) if payload.kind == "liasse"
+      end
+
+      # Formulaire principal de la liasse du régime (`2065`, `2031`,
+      # `2035`, `2072S`), qui accompagne la DAS2 ; `nil` si le régime est
+      # inconnu.
+      def self.regime_form(payload : Payload) : String?
+        tax_system(payload).try { |system| REGIME_FORMS[system]? }
       end
 
       def self.millesime(payload : Payload) : Int32
@@ -528,7 +572,8 @@ module Teledec
       end
 
       # Identité de l'entreprise pour `POST /service/creation-entreprise`
-      # (compte en marque blanche, D-TDC3-007).
+      # (compte en marque blanche, D-TDC3-007), avec son régime fiscal et
+      # son régime de TVA quand le document les donne (D-TDC5-002).
       def self.company_identity(payload : Payload, credentials : Credentials, year_end : Time) : Hash(String, String | Int32)
         identity = payload.identity
         hash = {"siren" => identity.siren, "name" => identity.company_name, "yearEndMonth" => year_end.month,
@@ -536,6 +581,8 @@ module Teledec
         {"addressStreet" => identity.street, "addressPostalCode" => identity.postcode, "addressCity" => identity.city,
          "addressCountry" => identity.country_code, "legalForm" => legal_form(identity.legal_form).to_s,
          "email" => credentials.email}.each { |name, value| hash[name] = value unless value.empty? }
+        tax_system(payload).try { |system| FULL_REGIMES[system]?.try { |regime| hash["fullRegimeFiscal"] = regime } }
+        vat_regime(payload).try { |regime| hash["regimeFiscalTVA"] = regime }
         hash
       end
 

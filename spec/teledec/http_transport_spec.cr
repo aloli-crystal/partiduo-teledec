@@ -294,6 +294,23 @@ describe "Adaptateur HTTP de TELEDEC : jeton, erreurs et réponses inattendues" 
     exchange.count("/service/creation-entreprise").should eq(1)
   end
 
+  it "crée le compte et l'entreprise, à son régime, avant la première liasse (la liasse ne le crée pas)" do
+    exchange = ScriptedExchange.new.script("/service/creation-entreprise", 200, "ok")
+      .script("/service/liasse", 200, "https://stage.teledec.fr/liasse/7")
+    adapter = transport(exchange)
+    identity = Teledec::Payload::Identity.new("Cabinet Morel", "EI", "732829320", "", "", nil, "", "69002", "Lyon", "FR", "")
+    body = Teledec::Payload.new("liasse", %w[2035], identity, "2025-01-01", "2025-12-31",
+      boxes: {"2035-A" => {"AA" => "42000"}}).to_json
+    liasse = Teledec::Submission.new("partiduo-1-2-abc", "liasse", %w[2035], body, "abc", year_end: "2025-12-31")
+    adapter.submit(credentials(account_ready: false), liasse).account_created.should be_true
+    exchange.requests.map(&.path).should eq(["/oauth2/token", "/service/creation-entreprise", "/service/liasse"])
+    created = JSON.parse(exchange.requests[1].body)["identity"]
+    created["fullRegimeFiscal"].as_s.should eq("BNC")
+    created["regimeFiscalTVA"]?.should be_nil
+    adapter.submit(credentials, liasse).account_created.should be_false
+    exchange.count("/service/creation-entreprise").should eq(1)
+  end
+
   it "prend la source dans PARTIDUO_TELEDEC_SOURCE, API à défaut, et masque le secret des identifiants" do
     previous = ENV["PARTIDUO_TELEDEC_SOURCE"]?
     begin

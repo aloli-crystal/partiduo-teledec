@@ -7,9 +7,10 @@ require "http/server"
 # Suite d'intégration contre l'environnement de test (stage) de TELEDEC,
 # par l'adaptateur réel (`Teledec::HttpTransport`) : jeton, création d'une
 # entreprise de test, liasse d'une balance de démonstration (URL rendue),
-# CA3, DAS2 et relevé d'acompte d'IS 2571 en marque blanche, 2035 d'un
-# libéral sans Comptabilité (seconde entreprise de test, régime BNC),
-# rappels de TELEDEC reçus par la réception réelle de l'extension. Activée
+# CA3, DAS2 (jointe au formulaire principal du régime) et relevé d'acompte
+# d'IS 2571 en marque blanche, 2035 d'un libéral sans Comptabilité (seconde
+# entreprise de test, régime BNC), rappels de TELEDEC reçus par la
+# réception réelle de l'extension. Activée
 # seulement si `~/.config/partiduo/teledec-sandbox.env` porte
 # `TELEDEC_SANDBOX_CLIENT_ID` et `TELEDEC_SANDBOX_CLIENT_SECRET` ; aucune
 # valeur du fichier n'est jamais affichée, journalisée ni copiée (les
@@ -27,7 +28,12 @@ require "http/server"
 # test. Tout part sur le stage (`sandbox`) : rien n'est transmis à la
 # DGFiP, et la liasse est envoyée sans bouton « Envoyer ».
 #
-# Rappels (callbacks) : l'exemple ne s'active que si `TELEDEC_CALLBACK_URL`
+# Rappels (callbacks) : TELEDEC rappelle à l'envoi, à l'acceptation et au
+# rejet par la DGFiP ; en marque blanche, l'envoi est fait par
+# l'utilisateur depuis le lien de la déclaration (l'API n'a pas de route
+# d'envoi, D-TDC5-003). L'exemple dépose une CA3, affiche son lien sur le
+# stage et demande de cliquer sur « Envoyer » (rien ne part à la DGFiP),
+# puis attend le rappel. Il ne s'active que si `TELEDEC_CALLBACK_URL`
 # (adresse publique https qui mène au port d'écoute de l'exemple : tunnel
 # vers ce poste) et `TELEDEC_CALLBACK_PASSWORD` (mot de passe des rappels du
 # partenaire, configuré chez TELEDEC) sont réglés ; identifiant facultatif
@@ -171,6 +177,15 @@ module Teledec::SandboxSpec
     fail "#{what} refusée : #{ex.key} — #{scrub(ex.params.values.join(" ; ").presence || "sans message de TELEDEC")}"
   end
 
+  # État d'un dépôt ; un refus du suivi fait échouer l'exemple avec le
+  # message de TELEDEC (expurgé) plutôt qu'une trace.
+  def self.status!(transport : HttpTransport, credentials : Credentials, remote_id : String, what : String) : RemoteStatus
+    transport.status(credentials, remote_id)
+  rescue ex : TransportError
+    fail "#{what} : suivi refusé par TELEDEC (#{ex.key}) — " \
+         "#{scrub(ex.params.values.join(" ; ").presence || "sans message de TELEDEC")}"
+  end
+
   # États bruts de TELEDEC qui peuvent précéder ses contrôles.
   UNSETTLED = {"", "notfound", "notcompleted"}
 
@@ -179,11 +194,11 @@ module Teledec::SandboxSpec
   # `CompleteWithErrors`, avec les libellés de ses erreurs (expurgés).
   def self.settled_status!(recorder : Recorder, transport : HttpTransport, credentials : Credentials,
                            remote_id : String, what : String) : RemoteStatus
-    status = transport.status(credentials, remote_id)
+    status = status!(transport, credentials, remote_id, what)
     6.times do
       break unless UNSETTLED.includes?(status.remote_status)
       sleep 5.seconds
-      status = transport.status(credentials, remote_id)
+      status = status!(transport, credentials, remote_id, what)
     end
     fail "#{what} : TELEDEC ne trouve pas le dépôt (declaration-status)" if status.remote_status == "notfound"
     if status.remote_status == "completewitherrors"
@@ -272,7 +287,8 @@ module Teledec::SandboxSpec
       nil, {"periodicity" => "month"})
   end
 
-  # DAS2 de 2025 : une société (raison sociale et SIRET) payée de deux
+  # DAS2 de 2025, entreprise de test à l'IS simplifié (`is_rsi` : jointe à
+  # une 2065 vide, D-TDC5-001) : une société (raison sociale et SIRET) payée de deux
   # natures (honoraires et commissions : sous-tableau
   # `repetitionDAS2MontantSommesVersees`), une personne physique (nom,
   # prénoms, date de naissance) payée de droits d'auteur.
@@ -284,7 +300,8 @@ module Teledec::SandboxSpec
         {"copyright" => "1800"}, "1800", person: true, last_name: "MARTIN", first_names: "Claire",
         birth_date: "1980-05-14"),
     ]
-    Payload.new("das2", ["DAS2"], identity, "2025-01-01", "2025-12-31", 0, nil, nil, nil, lines, {"threshold" => "1200"})
+    Payload.new("das2", ["DAS2"], identity, "2025-01-01", "2025-12-31", 0, nil, nil, nil, lines,
+      {"threshold" => "1200", "tax_system" => "is_rsi"})
   end
 
   # Quatrième relevé d'acompte d'IS de l'exercice 2026 : 2 500 €.
@@ -349,6 +366,46 @@ module Teledec::SandboxSpec
   # avec ou sans le chemin des rappels ; `nil` si elle n'est pas en https.
   def self.callback_target(public_url : String) : String?
     Callbacks.url(public_url.strip.rstrip('/').chomp(Callbacks::PATH))
+  end
+
+  # Invite, dans la sortie, à envoyer la déclaration depuis son lien : en
+  # marque blanche, l'envoi est une action de l'utilisateur sur l'interface
+  # de TELEDEC (l'API n'a pas de route d'envoi, D-TDC5-003). Sur le stage,
+  # rien ne part à la DGFiP. Le lien n'est affiché que s'il ne contient
+  # aucune valeur du fichier de configuration.
+  def self.announce_send(submitted : Submitted, wait : Time::Span, port : Int32) : Nil
+    link = submitted.url.strip
+    fail "TELEDEC n'a pas rendu de lien pour #{submitted.remote_id} : envoi impossible depuis la suite" if link.empty?
+    shown = scrub(link) == link ? link : "(lien masqué : il contient une valeur du fichier de configuration ; " \
+                                         "ouvrez la déclaration depuis https://stage.teledec.fr)"
+    STDOUT.puts
+    STDOUT.puts "  ┌ Rappels de TELEDEC — action attendue"
+    STDOUT.puts "  │ CA3 déposée sur le stage (#{submitted.remote_id}). Ouvrez sa déclaration :"
+    STDOUT.puts "  │   #{shown}"
+    STDOUT.puts "  │ puis cliquez sur « Envoyer ». Stage : rien ne part à la DGFiP (paiement éventuel fictif :"
+    STDOUT.puts "  │ n'importe quelle carte, code 3D Secure 1234)."
+    STDOUT.puts "  └ En attente du rappel de TELEDEC : #{wait.total_seconds.to_i} s au plus " \
+                "(TELEDEC_CALLBACK_WAIT), port #{port}…"
+    STDOUT.flush
+  end
+
+  # Premier rappel de la déclaration (référence du dépôt, sinon SIREN de
+  # l'entreprise de test) reçu dans le délai, ou premier rappel refusé par
+  # la réception ; les rappels d'autres déclarations sont signalés et
+  # ignorés. `nil` sans rappel dans le délai.
+  def self.wait_callback(receiver : CallbackReceiver, wait : Time::Span, reference : String) : CallbackReceiver::Received?
+    deadline = Time.instant + wait
+    loop do
+      remaining = deadline - Time.instant
+      return if remaining <= Time::Span.zero
+      received = receiver.wait(remaining) || return
+      return received unless received.status == 200
+      body = JSON.parse(received.body)
+      report = Remote::Formats.report(body)
+      return received if report.reference == reference || body["siren"]?.try(&.as_s?) == SIREN
+      STDOUT.puts "  (rappel d'une autre déclaration reçu et ignoré : #{scrub(report.form)} #{scrub(report.status)})"
+      STDOUT.flush
+    end
   end
 
   # Applique au processus, le temps du bloc, le mot de passe (et
@@ -474,7 +531,7 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       submitted = transport.submit(Sandbox.credentials, submission)
       submitted.url.should start_with("https://stage.teledec.fr")
       submitted.remote_id.should eq("liasse:#{Sandbox::SIREN}:2025-12-31")
-      status = transport.status(Sandbox.credentials, "liasse:#{Sandbox::SIREN}:2025-12-31")
+      status = Sandbox.status!(transport, Sandbox.credentials, "liasse:#{Sandbox::SIREN}:2025-12-31", "Liasse")
       status.state.should eq("pending")
     end
 
@@ -486,7 +543,7 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       submitted = transport.submit(Sandbox.credentials, submission)
       submitted.remote_id.should eq("3310CA3:#{Sandbox::SIREN}:2026-08-31:2026-09-19")
       submitted.url.should start_with("https://stage.teledec.fr/")
-      status = transport.status(Sandbox.credentials, submitted.remote_id)
+      status = Sandbox.status!(transport, Sandbox.credentials, submitted.remote_id, "CA3")
       status.state.should eq("pending")
       status.remote_status.should eq("readytobesent")
     end
@@ -537,10 +594,12 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       submitted = Sandbox.deposit!(transport, credentials, Sandbox.submission(payload), "Liasse 2035 sans balance")
       submitted.url.should start_with("https://stage.teledec.fr")
       submitted.remote_id.should eq("liasse:#{Sandbox::LIBERAL_SIREN}:2025-12-31")
-      transport.status(credentials, submitted.remote_id).state.should eq("pending")
+      # Compte de la seconde entreprise créé par l'adaptateur avant la
+      # liasse (la liasse ne le crée pas, D-TDC5-002) : le suivi le trouve.
+      Sandbox.status!(transport, credentials, submitted.remote_id, "Liasse 2035 sans balance").state.should eq("pending")
     end
 
-    it "reçoit un rappel de TELEDEC authentifié, accepté par la réception de l'extension ; un mauvais mot de passe est refusé" do
+    it "reçoit, après l'envoi de la CA3 depuis son lien, un rappel authentifié accepté par la réception de l'extension ; un mauvais mot de passe est refusé" do
       public_url = Sandbox.setting("TELEDEC_CALLBACK_URL")
       password = Sandbox.setting("TELEDEC_CALLBACK_PASSWORD")
       unless public_url && password
@@ -561,19 +620,18 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
           submission = Sandbox.submission(Sandbox.ca3_payload(7), due_on: "2026-08-19", callback_url: target)
           submitted = Sandbox.deposit!(Sandbox.transport, Sandbox.credentials, submission, "CA3 avec adresse de rappel")
           wait = Sandbox.callback_wait
-          STDOUT.puts "\n  En attente d'un rappel de TELEDEC (#{wait.total_seconds.to_i} s au plus, port #{receiver.port})…"
-          received = receiver.wait(wait) ||
-                     fail "aucun rappel reçu en #{wait.total_seconds.to_i} s pour #{submitted.remote_id} : TELEDEC ne " \
-                          "rappelle peut-être qu'à l'envoi (vérifier le tunnel vers le port #{receiver.port}, ou " \
-                          "allonger TELEDEC_CALLBACK_WAIT)"
+          # TELEDEC rappelle à l'envoi, à l'acceptation et au rejet ; en
+          # marque blanche, l'envoi se fait depuis le lien de la déclaration
+          # (aucune route d'envoi dans l'API, D-TDC5-003).
+          Sandbox.announce_send(submitted, wait, receiver.port)
+          received = Sandbox.wait_callback(receiver, wait, submission.reference) ||
+                     fail "aucun rappel de TELEDEC pour #{submitted.remote_id} en #{wait.total_seconds.to_i} s : la " \
+                          "déclaration a-t-elle été envoyée depuis son lien (bouton « Envoyer ») ? Vérifier aussi le " \
+                          "tunnel vers le port #{receiver.port}, ou allonger TELEDEC_CALLBACK_WAIT"
           if received.status != 200
             fail "rappel reçu mais refusé par la réception de l'extension (HTTP #{received.status}) : " \
                  "#{received.status == 401 ? "mot de passe du rappel différent de TELEDEC_CALLBACK_PASSWORD" : "corps illisible"}"
           end
-          report = Teledec::Remote::Formats.report(JSON.parse(received.body))
-          concerned = report.reference == submission.reference ||
-                      JSON.parse(received.body)["siren"]?.try(&.as_s?) == Sandbox::SIREN
-          fail "rappel reçu pour une autre déclaration" unless concerned
           user = Sandbox.setting("TELEDEC_CALLBACK_USER") || "teledec"
           wrong = "Basic #{Base64.strict_encode("#{user}:#{password}-faux")}"
           receiver.dispatch(received.body, wrong).should eq(401)

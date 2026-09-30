@@ -183,6 +183,8 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     amounts["BA"].as_i.should eq(1212)
     beneficiary["AG_3251_1"].as_s.should eq("69003")
     block["repetitionDAS2TotauxSommesVersees"][0]["TA"].as_i.should eq(1212)
+    # Jointe au formulaire principal du régime (IS simplifié : 2065), vide.
+    JSON.parse(last_request("/service/declaration-marque-blanche").body)["2065"].as_h.should be_empty
 
     advance = S.prepare("is_2571", fiscal_year_id: S.fiscal_year_id, number: 2, amount: BigDecimal.new(2500))
     Api.transmit(S.admin, advance.id).value!.remote_id.should eq("2571:732829320:2026-12-31:2026-06-15")
@@ -205,6 +207,32 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     Api.refresh(S.admin, das2.id).value!.status.should eq("acknowledged")
     S.teledec.acknowledge("2571:732829320:2026-12-31:2026-06-15")
     Api.refresh(S.admin, advance.id).value!.status.should eq("acknowledged")
+  end
+
+  it "refuse, comme le stage, un dépôt en marque blanche sans formulaire principal du régime (DAS2 seule)" do
+    S.books
+    server = S.teledec.server
+    basic = Base64.strict_encode("#{Teledec::SimulatedTeledec::LOGIN}:#{Teledec::SimulatedTeledec::API_KEY}")
+    token = server.call(Teledec::Remote::Request.new("POST", Teledec::HttpTransport::AUTH_URL,
+      HTTP::Headers{"Authorization" => "Basic #{basic}"}, "grant_type=client_credentials&scope=stage/marque-blanche"))
+    bearer = HTTP::Headers{"Authorization" => "Bearer #{JSON.parse(token.body)["access_token"].as_s}"}
+    stamp = Formats.paris(Time.utc).to_s("%Y-%m-%dT%H:%M:%S")
+    das2 = {"repetitionDAS2TV" => [{"AF_3036_1" => "Cabinet Durand",
+                                    "repetitionDAS2MontantSommesVersees" => [{"CA" => "H", "BA" => 1212}]}]}
+    document = {"auth" => {"email" => Teledec::SimulatedTeledec::ACCOUNT, "timestamp" => stamp},
+                "identity" => {"siret" => Teledec::SimulatedTeledec::SIRET},
+                "period" => {"begin" => "2026-01-01", "end" => "2026-12-31"}, "DAS2" => das2}
+    url = "https://stage.teledec.fr/service/declaration-marque-blanche"
+    alone = server.call(Teledec::Remote::Request.new("POST", url, bearer, document.to_json))
+    alone.status.should eq(400)
+    JSON.parse(alone.body)["message"].as_s.should eq(
+      "aucun formulaire de TVA ou de paiement ou de liasse n'a été trouvé dans le message envoyé depuis votre " \
+      "logiciel de comptabilité. Un des formulaires principaux permettant l'identification du régime de " \
+      "l'entreprise n'est pas présent, veuillez en saisir un dans votre payload. ISRN : 3310CA3, 3514, 3519…")
+    S.teledec.deposits.should be_empty
+    joined = document.merge({"2065" => {} of String => String})
+    server.call(Teledec::Remote::Request.new("POST", url, bearer, joined.to_json)).status.should eq(200)
+    S.teledec.deposits.keys.should eq(["DAS2:732829320:2026-12-31"])
   end
 
   it "garde en attente un dépôt que les contrôles de TELEDEC bloquent avant l'envoi" do

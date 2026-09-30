@@ -113,6 +113,7 @@ fr:
         unsupported: "TELEDEC ne propose pas cette déclaration par son API : déposez-la sur le site de TELEDEC."
         siret: "Indiquez le SIRET de l'établissement dans les paramètres de TELEDEC : TELEDEC y rattache la liasse."
         das2_nature: "Nature de rémunération « %{nature} » sans lettre de la DAS2 : corrigez les comptes de la DAS2 et préparez de nouveau."
+        das2_regime: "Régime d'imposition inconnu pour la DAS2 : TELEDEC exige le formulaire principal du régime. Choisissez le régime dans les paramètres de TELEDEC et préparez de nouveau."
         user_domain: "Domaine du partenaire non réglé sur cette instance (PARTIDUO_TELEDEC_USER_DOMAIN) : le compte de l'entreprise chez TELEDEC ne peut être formé. Demandez à l'opérateur de le régler."
         password: "Mot de passe du compte TELEDEC de l'entreprise absent ou illisible : réessayez."
         greffe: "Le dépôt au greffe ne passe pas par l'API de TELEDEC (parcours de redirection non encore branché) : déposez-le sur le site de TELEDEC."

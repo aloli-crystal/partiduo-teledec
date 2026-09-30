@@ -66,8 +66,10 @@ document intangible une fois transmis (déclencheur PostgreSQL).
 |Interface abstraite `Teledec::Transport` ; *adaptateur réel*
 `Teledec::HttpTransport` (API partenaire de TELEDEC) : jeton OAuth2
 `client_credentials` en cache, liasse par l'API Balance (URL de la liasse
-rendue à l'utilisateur), TVA CA3 et CA12, DAS2, relevés 2571 et 2572 par
-l'API marque blanche, suivi (`declaration-status`, comptes-rendus), rappels
+rendue à l'utilisateur), TVA CA3 et CA12, DAS2 (jointe au formulaire
+principal de la liasse du régime, vide : TELEDEC refuse une DAS2 seule),
+relevés 2571 et 2572 par l'API marque blanche ; entreprise et compte créés
+chez TELEDEC, à leur régime, avant le premier dépôt ; suivi (`declaration-status`, comptes-rendus), rappels
 de TELEDEC reçus sur `/hooks/TELEDEC/callback` (mot de passe `Basic` du
 partenaire). TELEDEC
 simulé pour les specs (mêmes échanges HTTP). En repli (transport
@@ -202,10 +204,10 @@ journalisée ni copiée : les messages d'échec en sont expurgés.
 |Entreprise de test |`creation-entreprise` rattache l'entreprise fictive (SIREN `999888779`, IS `ISRS`) à son compte en marque blanche.
 |Liasse |Balance de démonstration acceptée par l'API Balance (source `API`), URL rendue, état lu.
 |CA3 |Dépôt en marque blanche, lien rendu, état `readytobesent`.
-|DAS2 |Deux bénéficiaires — une société (`AF_3036_1`, `AF_3039_1`) payée de deux natures (sous-tableau `repetitionDAS2MontantSommesVersees`), une personne physique (`AE_3036_1`, `AE_3036_2`, `AI`) — ; lien, identifiant de suivi, état lu. Échoue si les contrôles de TELEDEC signalent `CompleteWithErrors`, avec les libellés d'erreur rendus par TELEDEC.
+|DAS2 |Deux bénéficiaires — une société (`AF_3036_1`, `AF_3039_1`) payée de deux natures (sous-tableau `repetitionDAS2MontantSommesVersees`), une personne physique (`AE_3036_1`, `AE_3036_2`, `AI`) — ; jointe à une 2065 vide (formulaire principal du régime IS, exigé par TELEDEC) ; lien, identifiant de suivi, état lu. Échoue si les contrôles de TELEDEC signalent `CompleteWithErrors`, avec les libellés d'erreur rendus par TELEDEC.
 |Relevé 2571 |Quatrième acompte d'IS de l'exercice 2026 (régime de l'entreprise de test remis à `ISRS` avant le dépôt) ; lien, identifiant, état ; même contrôle `CompleteWithErrors`.
-|2035 sans balance |2035 construite par l'extension dans la base de test avec le module `liberal` seul (régime BNC, exercice 2025, aucune ligne de balance), déposée pour une *seconde* entreprise fictive (SIREN `999888662`, compte distinct) ; URL rendue. Un refus de TELEDEC fait échouer l'exemple avec son message.
-|Rappels |Serveur de réception local ; CA3 déposée avec l'adresse publique en `url` ; attend un rappel authentifié en `Basic`, accepté (200) par la réception réelle de l'extension (`Teledec::Ui::CallbackHandler`, `Callbacks.authenticate`, `Callbacks.receive`) ; le même corps avec un mauvais mot de passe, ou sans en-tête, est refusé (401).
+|2035 sans balance |2035 construite par l'extension dans la base de test avec le module `liberal` seul (régime BNC, exercice 2025, aucune ligne de balance), déposée pour une *seconde* entreprise fictive (SIREN `999888662`, compte distinct, créé par l'adaptateur au régime `BNC` avant la liasse) ; URL rendue, état lu. Un refus de TELEDEC, au dépôt comme au suivi, fait échouer l'exemple avec son message.
+|Rappels |Serveur de réception local ; CA3 déposée avec l'adresse publique en `url` ; la suite affiche le lien de la déclaration sur le stage et demande de l'ouvrir et de cliquer sur « Envoyer » (rien ne part à la DGFiP) ; attend un rappel authentifié en `Basic`, accepté (200) par la réception réelle de l'extension (`Teledec::Ui::CallbackHandler`, `Callbacks.authenticate`, `Callbacks.receive`) ; le même corps avec un mauvais mot de passe, ou sans en-tête, est refusé (401).
 |===
 
 Réglages du fichier, sans le préfixe `PARTIDUO_` :
@@ -235,9 +237,23 @@ TELEDEC_CALLBACK_URL=https://… DATABASE_URL='postgres:///partiduo_test_<agent>
   crystal spec spec/integration/sandbox_spec.cr -v
 ----
 
-TELEDEC ne rappelle peut-être qu'à l'envoi de la déclaration (réponses du
-29 septembre 2026 : « à l'envoi, à l'acceptation et au rejet ») : sans
-rappel dans le délai, l'exemple échoue en le disant.
+TELEDEC rappelle à l'envoi, à l'acceptation et au rejet par la DGFiP
+(réponses du 29 septembre 2026), pas au dépôt ; en marque blanche, l'envoi
+se fait depuis l'interface de TELEDEC et l'API n'a pas de route d'envoi.
+Pendant l'exemple des rappels, la sortie affiche donc :
+
+----
+  ┌ Rappels de TELEDEC — action attendue
+  │ CA3 déposée sur le stage (3310CA3:999888779:2026-07-31:2026-08-19). Ouvrez sa déclaration :
+  │   https://stage.teledec.fr/…
+  │ puis cliquez sur « Envoyer ». Stage : rien ne part à la DGFiP (paiement éventuel fictif :
+  │ n'importe quelle carte, code 3D Secure 1234).
+  └ En attente du rappel de TELEDEC : 300 s au plus (TELEDEC_CALLBACK_WAIT), port 8787…
+----
+
+Ouvrir le lien, cliquer sur « Envoyer » dans le délai (`TELEDEC_CALLBACK_WAIT`,
+5 minutes par défaut) ; sans rappel, l'exemple échoue en le disant. Les
+rappels d'autres déclarations reçus entre-temps sont signalés et ignorés.
 
 == Licence
 

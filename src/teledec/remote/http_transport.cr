@@ -26,9 +26,10 @@ module Teledec
   # * Compte de l'entreprise en marque blanche (`Remote::Account`) : adresse
   #   dans le domaine du partenaire (`PARTIDUO_TELEDEC_USER_DOMAIN`,
   #   obligatoire : sans lui, `teledec.errors.transport.user_domain`) et
-  #   haché bcrypt du mot de passe ; créé par la liasse (`#EMAIL`,
-  #   `#MOT-DE-PASSE`) ou, avant la première déclaration en marque blanche,
-  #   par `POST /service/creation-entreprise`.
+  #   haché bcrypt du mot de passe ; créé avant le premier dépôt (liasse
+  #   ou marque blanche) par `POST /service/creation-entreprise`, avec le
+  #   régime fiscal du dossier (D-TDC5-002) ; la liasse porte aussi
+  #   `#EMAIL` et `#MOT-DE-PASSE`.
   #
   # Les identifiants et le jeton ne sont jamais journalisés ni rendus ;
   # les erreurs sont des clés i18n (`teledec.errors.transport.*`) avec le
@@ -103,21 +104,18 @@ module Teledec
       require_password!(credentials)
       key = Remote::Formats.key(payload, submission.due_on)
       if payload.kind == "liasse"
-        # TELEDEC rattache la liasse à l'entreprise par son SIRET ; la
-        # liasse crée le compte de l'entreprise s'il n'existe pas.
+        # TELEDEC rattache la liasse à l'entreprise par son SIRET. La liasse
+        # ne crée pas le compte de l'entreprise : sur le stage, le suivi
+        # d'une liasse déposée pour une entreprise sans compte répond
+        # « Utilisateur non trouvé » ; il est créé avant, comme pour la
+        # marque blanche (D-TDC5-002).
         raise TransportError.new("teledec.errors.transport.siret") unless Remote::Formats.siret(credentials, payload.identity)
+        created = ensure_company(credentials, payload, submission, account)
         body = Remote::Formats.liasse(payload, submission, credentials, source, send_button?, account)
         response = call(credentials, "POST", "/service/liasse", body, "text/plain; charset=utf-8")
-        return Submitted.new(key.to_s, link(response.body), "notcompleted", account_created: true)
+        return Submitted.new(key.to_s, link(response.body), "notcompleted", account_created: created)
       end
-      created = false
-      unless credentials.account_ready
-        year_end = submission.year_end.try { |day| Time.parse(day, "%F", Time::Location::UTC) } ||
-                   Time.utc(Time.parse(payload.period_to, "%F", Time::Location::UTC).year, 12, 31)
-        create_company(credentials, Remote::Formats.company_identity(payload, credentials, year_end),
-          credentials.password_hash, account)
-        created = true
-      end
+      created = ensure_company(credentials, payload, submission, account)
       body = Remote::Formats.white_label(payload, submission, credentials, @clock.call, account)
       response = call(credentials, "POST", "/service/declaration-marque-blanche", body, "application/json")
       answer = parse_object(response.body)
@@ -189,6 +187,19 @@ module Teledec
       raise TransportError.new("teledec.errors.transport.password") unless password_hash.starts_with?("$2")
       body = {"auth" => {"email" => account, "password" => password_hash}, "identity" => identity}.to_json
       call(credentials, "POST", "/service/creation-entreprise", body, "application/json").body
+    end
+
+    # Crée l'entreprise et son compte chez TELEDEC avant son premier dépôt
+    # (`credentials.account_ready` faux) ; rend vrai s'il vient d'être
+    # créé.
+    private def ensure_company(credentials : Credentials, payload : Payload, submission : Submission,
+                               account : String) : Bool
+      return false if credentials.account_ready
+      year_end = submission.year_end.try { |day| Time.parse(day, "%F", Time::Location::UTC) } ||
+                 Time.utc(Time.parse(payload.period_to, "%F", Time::Location::UTC).year, 12, 31)
+      create_company(credentials, Remote::Formats.company_identity(payload, credentials, year_end),
+        credentials.password_hash, account)
+      true
     end
 
     # --- HTTP -------------------------------------------------------------------

@@ -113,6 +113,7 @@ nl:
         unsupported: "TELEDEC biedt deze aangifte niet aan via zijn API: dien ze in op de website van TELEDEC."
         siret: "Vul de SIRET van de vestiging in bij de TELEDEC-instellingen: TELEDEC koppelt de aangifte eraan."
         das2_nature: "Vergoedingssoort \"%{nature}\" heeft geen DAS2-letter: corrigeer de DAS2-rekeningen en bereid opnieuw voor."
+        das2_regime: "Onbekend belastingstelsel voor de DAS2: TELEDEC vereist het hoofdformulier van het stelsel. Kies het belastingstelsel in de instellingen van TELEDEC en bereid opnieuw voor."
         user_domain: "Domein van de partner niet ingesteld op deze instantie (PARTIDUO_TELEDEC_USER_DOMAIN): de TELEDEC-account van de onderneming kan niet worden gevormd. Vraag de beheerder het in te stellen."
         password: "Wachtwoord van de TELEDEC-account van de onderneming ontbreekt of is onleesbaar: probeer opnieuw."
         greffe: "De neerlegging bij de griffie verloopt niet via de API van TELEDEC (omleidingstraject nog niet aangesloten): dien ze in op de website van TELEDEC."
