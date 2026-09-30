@@ -379,7 +379,7 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       # Exercice clos le 31 décembre 2026 : campagne 2027.
       lines.should contain("#MILLESIME 2027")
       lines.should contain("6064;Fournitures bureau A;0;0;120.00;0.00;120.00;0.00")
-      zones = JSON.parse(lines.last)["zones_formulaires"]
+      zones = Teledec::SpecSupport::LiasseBody.parse(text).zones
       # Clé = code de la case seul (réponses de TELEDEC du 29 septembre 2026).
       zones["2035A"].as_h.should eq({"AA" => JSON::Any.new(1235_i64), "AB" => JSON::Any.new(0_i64)})
     end

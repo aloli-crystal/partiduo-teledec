@@ -49,9 +49,9 @@ module Teledec
     # Comptabilité (active par `PARTIDUO_MODULES` pour provisionner le
     # dossier) est désactivée ensuite sauf `accounting: true`. Régime
     # d'imposition non choisi.
-    def self.liberal_books(accounting : Bool = false) : Nil
+    def self.liberal_books(accounting : Bool = false, year : Int32 = 2026) : Nil
       PartiduoUi::Reference.provision("fr")
-      @@fiscal_year_id = PartiduoUi::Reference.fiscal_year(2026).id
+      @@fiscal_year_id = PartiduoUi::Reference.fiscal_year(year).id
       @@admin_id = PartiduoUi::Accounts.create.user.id
       Partiduo::Api::Modules.activate(SYSTEM, "LIBERAL").value!
       Partiduo::Api::Liberal.load_defaults(SYSTEM)
@@ -64,6 +64,23 @@ module Teledec
 
     def self.liberal_nature(code : String) : Partiduo::Api::Liberal::NatureView
       Partiduo::Api::Liberal.natures(SYSTEM).find(&.code.==(code)) || raise "nature #{code} absente"
+    end
+
+    # Corps de la 2035 d'un libéral sans Comptabilité, sans balance, tel que
+    # l'adaptateur réel l'envoie à `/service/liasse` : construite comme la
+    # suite du stage (module `liberal` seul, exercice `year`, livre-journal
+    # d'un kinésithérapeute), préparée puis transmise (D-TDC7-001).
+    def self.liberal_2035_body(year : Int32 = 2025) : String
+      liberal_books(year: year)
+      connect
+      liberal_line("receipt", "#{year}-03-03", "42000", "RECEIPTS")
+      liberal_line("expense", "#{year}-03-04", "9600", "RENT")
+      liberal_line("expense", "#{year}-03-05", "850", "OFFICE")
+      actor = admin(LIBERAL)
+      filing = Api.prepare(actor, Api::PrepareInput.new(kind: "liasse", fiscal_year_id: fiscal_year_id)).value!
+      raise "2035 non prête : #{filing.controls.select(&.error?).map(&.key).join(", ")}" unless filing.ready?
+      Api.transmit(actor, filing.id).value!
+      teledec.requests.find! { |request| request.path == "/service/liasse" }.body
     end
 
     # Ligne du livre-journal de `liberal` (recette ou dépense).

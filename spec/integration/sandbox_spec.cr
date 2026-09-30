@@ -105,11 +105,19 @@ module Teledec::SandboxSpec
     ENV[name]?.presence || file_values[name]?.presence
   end
 
+  # Jeton JWT (en-tête et charge en base64url, `eyJ…`, signature
+  # facultative) : les liens de TELEDEC en portent un qui encode l'adresse
+  # du compte et le haché bcrypt de son mot de passe.
+  JWT = /eyJ[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]*){1,2}/
+  # Haché bcrypt (`$2a$…`, `$2b$…`, `$2y$…`), en clair ou encodé dans une
+  # adresse (`%242a%2412%24…`).
+  BCRYPT = /\$2[aby]?\$\d\d\$[.\/A-Za-z0-9]+|%242[aby]?%24\d\d%24[.\/%A-Za-z0-9]+/
+
   # Texte sans aucune valeur du fichier de configuration (identifiants,
-  # domaine, mot de passe des rappels, adresse publique…) ni haché bcrypt,
-  # borné : ce qui peut figurer dans un message d'échec.
+  # domaine, mot de passe des rappels, adresse publique…), ni jeton JWT, ni
+  # haché bcrypt, borné : ce qui peut figurer dans un message d'échec.
   def self.scrub(text : String) : String
-    clean = text.gsub(/\$2[aby]?\$\d\d\$[.\/A-Za-z0-9]{53}/, "***")
+    clean = text.gsub(JWT, "***").gsub(BCRYPT, "***")
     (file_values.values + SETTINGS.compact_map { |name| instance_setting(name) }).each do |secret|
       clean = clean.gsub(secret, "***") if secret.size >= 4
     end
@@ -152,11 +160,14 @@ module Teledec::SandboxSpec
   # libellés d'erreur de TELEDEC que le suivi ne remonte pas.
   class Recorder < Remote::Exchange
     getter bodies = {} of String => String
+    # Chemin de la dernière requête (sans la requête du jeton).
+    getter last_path : String? = nil
 
     def initialize(@inner : Remote::Exchange = Remote::Net.new)
     end
 
     def call(request : Remote::Request) : Remote::Response
+      @last_path = request.path unless request.url == HttpTransport::AUTH_URL
       response = @inner.call(request)
       @bodies[request.path] = response.body
       response
@@ -182,11 +193,42 @@ module Teledec::SandboxSpec
   end
 
   # Dépôt ; un refus de TELEDEC fait échouer l'exemple avec son message
-  # (expurgé) : c'est l'information cherchée.
-  def self.deposit!(transport : HttpTransport, credentials : Credentials, submission : Submission, what : String) : Submitted
+  # (expurgé) : c'est l'information cherchée. Avec `recorder`, le message
+  # nomme aussi la route qui a refusé (création de l'entreprise ou dépôt).
+  def self.deposit!(transport : HttpTransport, credentials : Credentials, submission : Submission, what : String,
+                    recorder : Recorder? = nil) : Submitted
     transport.submit(credentials, submission)
   rescue ex : TransportError
-    fail "#{what} refusée : #{ex.key} — #{scrub(ex.params.values.join(" ; ").presence || "sans message de TELEDEC")}"
+    route = recorder.try(&.last_path).try { |path| " (route #{path})" }
+    fail "#{what} refusée#{route} : #{ex.key} — " \
+         "#{scrub(ex.params.values.join(" ; ").presence || "sans message de TELEDEC")}"
+  end
+
+  # Lien rendu par TELEDEC vérifié sans l'afficher : il porte un jeton
+  # (adresse du compte, haché du mot de passe) ; en cas d'écart, seul son
+  # début tronqué et expurgé figure dans le message.
+  def self.expect_link!(submitted : Submitted, prefix : String, what : String) : Nil
+    return if submitted.url.starts_with?(prefix)
+    fail "#{what} : lien inattendu (#{truncated(submitted.url)}), attendu : #{prefix}…"
+  end
+
+  # Début d'un lien, jusqu'au premier segment qui ressemble à un jeton, 60
+  # caractères au plus, expurgé.
+  def self.truncated(link : String) : String
+    head = link.split(/(?=eyJ)|(?=%242)|(?=\$2)/, 2).first
+    head = head[0, 60] if head.size > 60
+    scrub(head).rstrip + "…"
+  end
+
+  # Lien complet écrit dans un fichier temporaire lisible du seul
+  # utilisateur (0600) ; rend son chemin. À supprimer après usage.
+  def self.write_link(link : String) : String
+    path = File.join(Dir.tempdir, "partiduo-teledec-lien-#{Random::Secure.hex(6)}.txt")
+    File.open(path, "w", perm: 0o600) do |file|
+      File.chmod(path, 0o600)
+      file.puts link
+    end
+    path
   end
 
   # État d'un dépôt ; un refus du suivi fait échouer l'exemple avec le
@@ -383,22 +425,25 @@ module Teledec::SandboxSpec
   # Invite, dans la sortie, à envoyer la déclaration depuis son lien : en
   # marque blanche, l'envoi est une action de l'utilisateur sur l'interface
   # de TELEDEC (l'API n'a pas de route d'envoi, D-TDC5-003). Sur le stage,
-  # rien ne part à la DGFiP. Le lien n'est affiché que s'il ne contient
-  # aucune valeur du fichier de configuration.
-  def self.announce_send(submitted : Submitted, wait : Time::Span, port : Int32) : Nil
+  # rien ne part à la DGFiP. Le lien porte un jeton JWT qui encode
+  # l'adresse du compte et le haché bcrypt de son mot de passe : il est
+  # écrit dans un fichier temporaire (0600, `write_link`), dont seul le
+  # chemin s'affiche avec le début tronqué du lien ; rend ce chemin.
+  def self.announce_send(submitted : Submitted, wait : Time::Span, port : Int32) : String
     link = submitted.url.strip
     fail "TELEDEC n'a pas rendu de lien pour #{submitted.remote_id} : envoi impossible depuis la suite" if link.empty?
-    shown = scrub(link) == link ? link : "(lien masqué : il contient une valeur du fichier de configuration ; " \
-                                         "ouvrez la déclaration depuis https://stage.teledec.fr)"
+    path = write_link(link)
     STDOUT.puts
     STDOUT.puts "  ┌ Rappels de TELEDEC — action attendue"
-    STDOUT.puts "  │ CA3 déposée sur le stage (#{submitted.remote_id}). Ouvrez sa déclaration :"
-    STDOUT.puts "  │   #{shown}"
+    STDOUT.puts "  │ CA3 déposée sur le stage (#{submitted.remote_id}). Ouvrez sa déclaration : lien complet"
+    STDOUT.puts "  │ dans #{path} (lisible de vous seul, supprimé à la fin de l'exemple),"
+    STDOUT.puts "  │ qui commence par #{truncated(link)}"
     STDOUT.puts "  │ puis cliquez sur « Envoyer ». Stage : rien ne part à la DGFiP (paiement éventuel fictif :"
     STDOUT.puts "  │ n'importe quelle carte, code 3D Secure 1234)."
     STDOUT.puts "  └ En attente du rappel de TELEDEC : #{wait.total_seconds.to_i} s au plus " \
                 "(TELEDEC_CALLBACK_WAIT), port #{port}…"
     STDOUT.flush
+    path
   end
 
   # Premier rappel de la déclaration (référence du dépôt, sinon SIREN de
@@ -532,7 +577,7 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       password = Crypto::Bcrypt::Password.create(Random::Secure.hex(16), cost: 12).to_s
       account = Sandbox.account!
       answer = Sandbox.transport.create_company(Sandbox.credentials, Sandbox.company_identity, password, account)
-      answer.should contain(account)
+      fail "création de l'entreprise : réponse sans l'adresse du compte (#{Sandbox.scrub(answer)[0, 200]})" unless answer.includes?(account)
     end
 
     it "envoie la liasse d'une balance de démonstration (URL rendue, source `API`)" do
@@ -541,7 +586,7 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       transport = Sandbox.transport
       submission = Sandbox.submission(Sandbox.liasse_payload)
       submitted = transport.submit(Sandbox.credentials, submission)
-      submitted.url.should start_with("https://stage.teledec.fr")
+      Sandbox.expect_link!(submitted, "https://stage.teledec.fr", "Lien")
       submitted.remote_id.should eq("liasse:#{Sandbox::SIREN}:2025-12-31")
       status = Sandbox.status!(transport, Sandbox.credentials, "liasse:#{Sandbox::SIREN}:2025-12-31", "Liasse")
       status.state.should eq("pending")
@@ -554,7 +599,7 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       submission = Sandbox.submission(Sandbox.ca3_payload, due_on: "2026-09-19")
       submitted = transport.submit(Sandbox.credentials, submission)
       submitted.remote_id.should eq("3310CA3:#{Sandbox::SIREN}:2026-08-31:2026-09-19")
-      submitted.url.should start_with("https://stage.teledec.fr/")
+      Sandbox.expect_link!(submitted, "https://stage.teledec.fr/", "Lien")
       status = Sandbox.status!(transport, Sandbox.credentials, submitted.remote_id, "CA3")
       status.state.should eq("pending")
       status.remote_status.should eq("readytobesent")
@@ -575,7 +620,7 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       transport = Sandbox.transport(recorder)
       credentials = Sandbox.credentials
       submitted = Sandbox.deposit!(transport, credentials, Sandbox.submission(Sandbox.das2_payload, due_on: due_on), "DAS2")
-      submitted.url.should start_with("https://stage.teledec.fr/")
+      Sandbox.expect_link!(submitted, "https://stage.teledec.fr/", "Lien")
       submitted.remote_id.should eq("DAS2:#{Sandbox::SIREN}:2025-12-31")
       status = Sandbox.settled_status!(recorder, transport, credentials, submitted.remote_id, "DAS2")
       status.state.should eq("pending")
@@ -593,7 +638,7 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       due_on = Teledec::Calendar.corporate_tax_advances(Time.utc(2026, 1, 1), Time.utc(2026, 12, 31))[3].to_s("%F")
       submission = Sandbox.submission(Sandbox.advance_payload, due_on: due_on, year_end: "2026-12-31")
       submitted = Sandbox.deposit!(transport, credentials, submission, "Relevé 2571")
-      submitted.url.should start_with("https://stage.teledec.fr/")
+      Sandbox.expect_link!(submitted, "https://stage.teledec.fr/", "Lien")
       submitted.remote_id.should eq("2571:#{Sandbox::SIREN}:2026-12-31:#{due_on}")
       status = Sandbox.settled_status!(recorder, transport, credentials, submitted.remote_id, "Relevé 2571")
       status.state.should eq("pending")
@@ -606,12 +651,22 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       payload.forms.should eq(%w[2035])
       payload.balance.should be_nil
       payload.details["source"].should eq("liberal")
+      # Corps vérifié avant tout appel (D-TDC7-001) : aucune section de
+      # balance, section JSON documentée (plusieurs lignes, deux blocs).
+      sections = Teledec::SpecSupport::LiasseBody.parse(Teledec::Remote::Formats.liasse(payload,
+        Sandbox.submission(payload), Teledec::Credentials.new("x", "y", "sandbox", Sandbox::EMAIL, Sandbox::LIBERAL_SIRET),
+        "API", false, "compte@exemple.org"))
+      sections.balance.should be_empty
+      (sections.json || "").lines.first?.should eq("{")
+      sections.document.as_h.keys.sort!.should eq(%w[informations_supplementaires zones_formulaires])
       Sandbox.require_stage!
       Sandbox.account!(Sandbox::LIBERAL_SIREN).should_not eq(Sandbox.account!)
-      transport = Sandbox.transport
+      recorder = Sandbox::Recorder.new
+      transport = Sandbox.transport(recorder)
       credentials = Sandbox.credentials(siret: Sandbox::LIBERAL_SIRET)
-      submitted = Sandbox.deposit!(transport, credentials, Sandbox.submission(payload), "Liasse 2035 sans balance")
-      submitted.url.should start_with("https://stage.teledec.fr")
+      submitted = Sandbox.deposit!(transport, credentials, Sandbox.submission(payload), "Liasse 2035 sans balance",
+        recorder)
+      Sandbox.expect_link!(submitted, "https://stage.teledec.fr", "Lien")
       submitted.remote_id.should eq("liasse:#{Sandbox::LIBERAL_SIREN}:2025-12-31")
       # Compte de la seconde entreprise créé par l'adaptateur avant la
       # liasse (la liasse ne le crée pas, D-TDC5-002) : le suivi le trouve.
@@ -642,7 +697,7 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
           # TELEDEC rappelle à l'envoi, à l'acceptation et au rejet ; en
           # marque blanche, l'envoi se fait depuis le lien de la déclaration
           # (aucune route d'envoi dans l'API, D-TDC5-003).
-          Sandbox.announce_send(submitted, wait, receiver.port)
+          link_file = Sandbox.announce_send(submitted, wait, receiver.port)
           received = Sandbox.wait_callback(receiver, wait, submission.reference) ||
                      fail "aucun rappel de TELEDEC pour #{submitted.remote_id} en #{wait.total_seconds.to_i} s : la " \
                           "déclaration a-t-elle été envoyée depuis son lien (bouton « Envoyer ») ? Vérifier aussi le " \
@@ -657,11 +712,41 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
           receiver.dispatch(received.body, nil).should eq(401)
           receiver.dispatch(received.body, "Basic #{Base64.strict_encode("#{user}:#{password}")}").should eq(200)
         ensure
+          link_file.try { |path| File.delete?(path) }
           receiver.close
         end
       end
     end
   else
     pending "identifiants du stage absents (~/.config/partiduo/teledec-sandbox.env)"
+  end
+end
+
+# Confidentialité de la sortie de la suite (hors ligne, toujours active) :
+# ni jeton JWT, ni haché bcrypt dans un message ; lien de déclaration
+# écrit dans un fichier lisible du seul utilisateur.
+describe "Sortie de la suite du stage (expurgation)" do
+  jwt = "eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImNvbXB0ZUBleGVtcGxlLm9yZyJ9.c2lnbmF0dXJlLWZpY3RpdmU"
+  hash = "$2a$12$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234"
+
+  it "retire des messages les jetons JWT et les hachés bcrypt, en clair ou encodés dans une adresse" do
+    text = "refus : https://stage.teledec.fr/service/declaration/#{jwt} ; mot de passe #{hash} ; " \
+           "?p=%242b%2412%24abcdefghijklmnopqrstuv ; eyJhbGciOiJIUzI1NiJ9.eyJ4IjoxfQ"
+    clean = Sandbox.scrub(text)
+    {clean.includes?("eyJ"), clean.includes?("$2a$"), clean.includes?("%242b")}.should eq({false, false, false})
+    clean.should start_with("refus : https://stage.teledec.fr/service/declaration/***")
+  end
+
+  it "n'affiche du lien que son début, et l'écrit en entier dans un fichier à droits 0600" do
+    link = "https://stage.teledec.fr/service/declaration/#{jwt}"
+    Sandbox.truncated(link).should eq("https://stage.teledec.fr/service/declaration/…")
+    Sandbox.truncated(link).includes?("eyJ").should be_false
+    path = Sandbox.write_link(link)
+    begin
+      (File.info(path).permissions.value & 0o777).should eq(0o600)
+      File.read(path).should eq("#{link}\n")
+    ensure
+      File.delete?(path)
+    end
   end
 end

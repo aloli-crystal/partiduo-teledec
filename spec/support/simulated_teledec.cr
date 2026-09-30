@@ -190,14 +190,19 @@ module Teledec
       private def liasse(request : Remote::Request, prefix : String) : Remote::Response
         fields = {} of String => String
         rows = 0
+        # Section JSON : de la première ligne qui commence par `{` à la fin
+        # du corps, un seul objet (forme de la documentation, D-TDC7-001).
+        head, brace, rest = request.body.partition(/^\{/m)
         zones = false
-        request.body.each_line do |line|
+        unless brace.empty?
+          section = (JSON.parse(brace + rest).as_h? rescue nil)
+          return text(500, "Misformatted JSON") unless section && section["zones_formulaires"]?.try(&.as_h?)
+          zones = true
+        end
+        head.each_line do |line|
           if line.starts_with?('#')
             name, _, value = line.lchop('#').partition(' ')
             fields[name] = value.strip
-          elsif line.starts_with?('{')
-            (JSON.parse(line) rescue return text(500, "erreur 103 : bloc JSON illisible"))
-            zones = true
           elsif !line.strip.empty?
             cells = line.split(';')
             unless cells.size == 8 && cells[2..].all?(&.matches?(/\A-?\d+(\.\d+)?\z/))

@@ -141,7 +141,7 @@ describe "TELEDEC pour un libéral sans Comptabilité (D-TDC2)" do
     body = S.teledec.deposits[S::LIASSE_ID].body
     body.should contain("#CATEGORIE-FISCALE BNC")
     body.lines.none? { |line| line.count(';') == 7 }.should be_true
-    zones = JSON.parse(body.lines.find!(&.starts_with?('{')))["zones_formulaires"]
+    zones = S::LiasseBody.parse(body).zones
     zones["2035A"]["AA"].as_i64.should eq(42000)
   end
 end

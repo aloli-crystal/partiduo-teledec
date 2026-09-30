@@ -268,7 +268,22 @@ describe "Documents de l'adaptateur réel contre les schémas officiels de TELED
     Api.transmit(actor, filing.id).value!
     body = S.teledec.requests.find! { |request| request.path == "/service/liasse" }.body
     body.lines.should contain("#MILLESIME 2027")
-    zones = JSON.parse(body.lines.last)["zones_formulaires"]
+    zones = S::LiasseBody.parse(body).zones
     zones["2035A"]["AA"].as_i.should eq(42000)
+  end
+
+  it "fait valider par les schémas 2035A et 2035B la section JSON de la 2035 sans balance, telle qu'envoyée (D-TDC7-001)" do
+    store = SchemaSpec.store!
+    body = S.liberal_2035_body(2025)
+    zones = S::LiasseBody.parse(body).zones.as_h
+    zones.keys.sort!.should eq(%w[2035A 2035B])
+    zones.each do |form, block|
+      outcome = store.check_block(form, block, 202601)
+      {form, outcome.schema_name, outcome.violations.map(&.to_s)}.should eq({form, "#{form}-2026", [] of String})
+    end
+    # Bloc de la 2035 elle-même (cases suffixées) : même schéma que l'envoi.
+    zones2035 = Formats.liasse_zones(Payload.new("liasse", %w[2035], SchemaSpec.identity, "2025-01-01", "2025-12-31",
+      boxes: {"2035" => {"FJ" => "120"}})) || raise "zones absentes"
+    store.check_block("2035", JSON.parse(zones2035["2035"].to_json), 202601).violations.should be_empty
   end
 end

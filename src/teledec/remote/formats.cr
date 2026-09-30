@@ -16,8 +16,10 @@ module Teledec
     #   sections — identification `#CLE valeur` (compte de l'entreprise :
     #   `#EMAIL`, `#MOT-DE-PASSE` bcrypt), balance `compte;libellé;ouv.
     #   débit;ouv. crédit;mvt débit;mvt crédit;solde débit;solde crédit`,
-    #   bloc JSON facultatif (`zones_formulaires`, clés = code de la case
-    #   seul, sauf 2065 et 2031 : `HA_2065`).
+    #   bloc JSON facultatif sur plusieurs lignes (`zones_formulaires`, clés
+    #   = code de la case seul, sauf 2065, 2031 et 2035 : `HA_2065` ;
+    #   `informations_supplementaires`) ; sans balance, la section de
+    #   balance est absente (D-TDC7-001).
     # * TVA, DAS2, IS : API marque blanche
     #   (`POST /service/declaration-marque-blanche`), JSON `auth`,
     #   `identity`, `period` et un bloc par formulaire en clés/valeurs ; la
@@ -275,10 +277,21 @@ module Teledec
             io << clean(row.account) << ';' << clean(row.label) << ";0;0;" << row.debit << ';' << row.credit << ';'
             io << row.balance_debit << ';' << row.balance_credit << '\n'
           end
-          if zones = liasse_zones(payload)
-            io << {"zones_formulaires" => zones}.to_json << '\n'
-          end
+          liasse_json(payload).try { |json| io << json << '\n' }
         end
+      end
+
+      # Section JSON de la liasse, dans la forme de la documentation de
+      # l'API Balance (D-TDC7-001) : objet sur plusieurs lignes, `{` seul
+      # sur la première et `}` seul sur la dernière, avec ses deux blocs
+      # `zones_formulaires` et `informations_supplementaires` (vide : Partiduo
+      # n'en transmet rien) ; `nil` sans case à joindre. Elle suit la
+      # dernière ligne de balance, ou l'identification quand la liasse n'a
+      # pas de balance (2035 d'un libéral sans Comptabilité) : la section de
+      # balance est alors absente, sans ligne vide ni ligne d'en-tête.
+      def self.liasse_json(payload : Payload) : String?
+        zones = liasse_zones(payload) || return
+        {"zones_formulaires" => zones, "informations_supplementaires" => {} of String => String}.to_pretty_json
       end
 
       # Cases jointes à la liasse (2035 préparée par le module `liberal`) :

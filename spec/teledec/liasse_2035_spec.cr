@@ -59,3 +59,53 @@ describe "2035 transmise à TELEDEC (module liberal, B-TDC-004)" do
     union.should eq(TELEDEC_2035_CODES.transform_values(&.sort))
   end
 end
+
+# Liasse sans balance (D-TDC7-001) : le stage a répondu « Misformatted JSON »
+# à la 2035 d'un libéral sans Comptabilité, dont la section JSON suivait
+# l'identification sur une seule ligne. Le corps suit désormais la forme
+# documentée de l'API Balance, vérifiée ici hors ligne.
+describe "2035 sans balance transmise à TELEDEC (D-TDC7-001)" do
+  it "envoie l'identification, aucune section de balance, puis une section JSON valide sur plusieurs lignes" do
+    body = S.liberal_2035_body(2025)
+    sections = S::LiasseBody.parse(body)
+    sections.header.all?(&.matches?(/\A#[A-Z-]+ \S/)).should be_true
+    sections.header.should contain("#CATEGORIE-FISCALE BNC")
+    sections.header.should contain("#EXERCICE-DATE-FIN 20251231")
+    sections.header.should contain("#MILLESIME 2026")
+    # Ni ligne de balance, ni ligne vide, ni ligne d'en-tête de balance.
+    sections.balance.should be_empty
+    body.lines.none?(&.strip.empty?).should be_true
+    body.lines.none?(&.includes?(';')).should be_true
+    # Section JSON : `{` seul sur sa ligne, `}` seul sur la dernière, rien après.
+    json = sections.json || raise "section JSON absente"
+    json.lines.first.should eq("{")
+    json.lines.last.should eq("}")
+    body.should end_with("}\n")
+    document = sections.document
+    document.as_h.keys.sort!.should eq(%w[informations_supplementaires zones_formulaires])
+    document["informations_supplementaires"].as_h.should be_empty
+    zones = sections.zones.as_h
+    zones.keys.sort!.should eq(%w[2035A 2035B])
+    zones.each_value { |block| block.as_h.each_value(&.as_i64) }
+    zones["2035A"]["AA"].as_i64.should eq(42000)
+    zones["2035B"]["CP"].as_i64.should eq(31550)
+  end
+
+  it "place la section JSON après la dernière ligne de balance, et n'en écrit aucune sans case" do
+    identity = Payload::Identity.new("Cabinet Martin", "EI", "732829320", "", "", "", "12 rue des Arts", "69002", "Lyon",
+      "FR", "contact@cabinet-martin.test")
+    credentials = Teledec::Credentials.new("login", "secret", "sandbox", "compta@exemple.test", "73282932000074",
+      password_hash: "$2a$12$empreinte")
+    submission = Teledec::Submission.new("partiduo-1-1-abcdef", "liasse", %w[2035], "{}", "abcdef")
+    rows = [Payload::BalanceRow.new("706", "Honoraires", "0.00", "42000.00", "0.00", "42000.00")]
+    boxes = {"2035-A" => {"AA" => "42000"}}
+    with_both = Payload.new("liasse", %w[2035], identity, "2025-01-01", "2025-12-31", balance: rows, boxes: boxes)
+    sections = S::LiasseBody.parse(Formats.liasse(with_both, submission, credentials, "API", false, "compte@exemple.test"))
+    sections.balance.should eq(["706;Honoraires;0;0;0.00;42000.00;0.00;42000.00"])
+    sections.zones["2035A"]["AA"].as_i64.should eq(42000)
+    bare = Payload.new("liasse", %w[2035], identity, "2025-01-01", "2025-12-31")
+    Formats.liasse_json(bare).should be_nil
+    sections = S::LiasseBody.parse(Formats.liasse(bare, submission, credentials, "API", false, "compte@exemple.test"))
+    {sections.balance, sections.json}.should eq({[] of String, nil})
+  end
+end
