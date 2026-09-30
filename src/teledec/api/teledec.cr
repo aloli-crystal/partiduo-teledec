@@ -215,7 +215,9 @@ module Teledec
       end
     end
 
-    # Transmet un dépôt préparé à TELEDEC. Refus : dépôt non préparé,
+    # Transmet un dépôt préparé à TELEDEC ; une 2035 du module `liberal`
+    # transmise fige son exercice (`tax_return.transmitted`, D-LIB2-003).
+    # Refus : dépôt non préparé,
     # document modifié depuis la préparation, contrôle bloquant, transport
     # désactivé (`Transports.current = nil`), identifiants
     # absents ou illisibles, erreur de TELEDEC (notée dans l'historique).
@@ -281,6 +283,8 @@ module Teledec
         current.transmitted_by_id = actor.user_id
         current.save!
         Filings.event(current, "transmitted", remote_id, actor.user_id)
+        # 2035 du module `liberal` transmise : l'exercice se fige (D-LIB2-003).
+        TaxReturns.transmitted(current, actor.user_id)
         Result(FilingView).success(Filings.view(current))
       end
       if recorded.failure?
@@ -400,6 +404,7 @@ module Teledec
           filing.status = "transmitted"
           filing.save!
           Filings.event(filing, "transmitted", I18n.t("teledec.events.manual"), actor.user_id)
+          TaxReturns.transmitted(filing, actor.user_id)
           next Result(FilingView).success(Filings.view(filing)) if input.status == "transmitted"
         end
         apply_outcome(filing, input.status == "acknowledged" ? "acknowledged" : "rejected", input.reason.strip, attachment, nil, actor)

@@ -188,6 +188,9 @@ module Teledec
           filing.rejection_reason = reason.presence || I18n.t("teledec.events.no_reason")
           filing.rejected_at = at || Time.utc
           event(filing, "rejected", filing.rejection_reason.to_s, user_id)
+          # 2035 rejetée : l'exercice du module `liberal` redevient
+          # modifiable, sauf clôture (D-LIB2-003).
+          TaxReturns.rejected(filing, user_id)
         end
         filing.last_error = ""
         filing.save!
