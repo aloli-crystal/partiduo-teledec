@@ -156,10 +156,18 @@ module Teledec
       # un dépôt porte son vrai régime (D-TDC5-002, D-TDC6-005). Jamais dans
       # l'identité d'une déclaration en marque blanche : réservé à l'option
       # « EDI Requête » ; TELEDEC y déduit le régime des formulaires.
+      # Valeurs de la liste de référence de TELEDEC (« Liste régimes
+      # fiscaux », base de connaissances partenaires) : le BNC s'écrit
+      # `BNCDC` (déclaration contrôlée) ; `BNC` est refusé par
+      # `creation-entreprise` (« Misformatted JSON », D-TDC8-001).
       FULL_REGIMES = {
-        "is_rsi" => "ISRS", "is_rn" => "ISRN", "bic_rsi" => "BICRS", "bic_rn" => "BICRN", "bnc" => "BNC",
+        "is_rsi" => "ISRS", "is_rn" => "ISRN", "bic_rsi" => "BICRS", "bic_rn" => "BICRN", "bnc" => "BNCDC",
         "sci" => "RF72S",
       }
+
+      # Liste complète des régimes fiscaux admis par TELEDEC.
+      KNOWN_REGIMES = Set{"ISRS", "ISRN", "BICRS", "BICRN", "BABS", "BABN", "BICMN", "BICMS", "BNCDC", "RF72S", "RF72C",
+                          "ISGM", "ISGMSEULS", "ISGT"}
 
       # Catégorie fiscale et régime de la liasse, d'après ses formulaires.
       CATEGORIES = {

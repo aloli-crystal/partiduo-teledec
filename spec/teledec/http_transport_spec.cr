@@ -305,7 +305,7 @@ describe "Adaptateur HTTP de TELEDEC : jeton, erreurs et réponses inattendues" 
     adapter.submit(credentials(account_ready: false), liasse).account_created.should be_true
     exchange.requests.map(&.path).should eq(["/oauth2/token", "/service/creation-entreprise", "/service/liasse"])
     created = JSON.parse(exchange.requests[1].body)["identity"]
-    created["fullRegimeFiscal"].as_s.should eq("BNC")
+    created["fullRegimeFiscal"].as_s.should eq("BNCDC")
     created["regimeFiscalTVA"]?.should be_nil
     adapter.submit(credentials, liasse).account_created.should be_false
     exchange.count("/service/creation-entreprise").should eq(1)
@@ -335,5 +335,13 @@ describe "Adaptateur HTTP de TELEDEC : jeton, erreurs et réponses inattendues" 
     Remote::Net.read_limited(IO::Memory.new("abcd"), 4).should eq("abcd")
     Remote::Net.read_limited(nil, 4).should eq("")
     error_of { Remote::Net.read_limited(IO::Memory.new("abcde"), 4) }.key.should eq("teledec.errors.transport.invalid")
+  end
+end
+
+describe "Régimes fiscaux envoyés à TELEDEC" do
+  it "n'emploie que des valeurs de la liste de référence de TELEDEC" do
+    Teledec::Remote::Formats::FULL_REGIMES.values.each do |regime|
+      Teledec::Remote::Formats::KNOWN_REGIMES.includes?(regime).should be_true, regime
+    end
   end
 end
