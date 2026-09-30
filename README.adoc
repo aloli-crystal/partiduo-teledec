@@ -193,6 +193,13 @@ TELEDEC (jamais la production) ; elle ne s'active que si
 et `TELEDEC_SANDBOX_CLIENT_SECRET` (jamais affichés ni journalisés), et
 passe en attente si le stage est injoignable depuis le processus.
 
+Le fichier étant dans le dossier de configuration de Partiduo, les réglages
+de l'instance s'y écrivent sans le préfixe `PARTIDUO_` :
+`TELEDEC_USER_DOMAIN` (obligatoire pour les dépôts), `TELEDEC_USER_FORMAT`,
+`TELEDEC_SOURCE`, `TELEDEC_CALLBACK_USER`, `TELEDEC_CALLBACK_PASSWORD`. La
+suite les reprend sous leur nom d'instance, sauf si l'environnement les fixe
+déjà.
+
 == Licence
 
 GNU Affero General Public License v3 ou ultérieure (fichier `LICENSE`).

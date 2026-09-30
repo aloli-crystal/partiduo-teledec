@@ -10,9 +10,14 @@ require "crypto/bcrypt/password"
 # `~/.config/partiduo/teledec-sandbox.env` porte `TELEDEC_SANDBOX_CLIENT_ID`
 # et # `TELEDEC_SANDBOX_CLIENT_SECRET` ; ces valeurs ne sont jamais affichées,
 # journalisées ni copiées. Les dépôts exigent aussi le domaine déclaré comme
-# partenaire chez TELEDEC (`PARTIDUO_TELEDEC_USER_DOMAIN`, compte de
-# l'entreprise de test en marque blanche) ; sans lui, ils restent en
-# attente. Tout part sur le stage (`sandbox`) : rien n'est transmis à la
+# partenaire chez TELEDEC (`TELEDEC_USER_DOMAIN`, compte de l'entreprise de
+# test en marque blanche) ; sans lui, ils restent en attente.
+#
+# Le fichier étant déjà dans le dossier de configuration de Partiduo, ses
+# réglages s'écrivent sans le préfixe `PARTIDUO_` : `TELEDEC_USER_DOMAIN`,
+# `TELEDEC_USER_FORMAT`, `TELEDEC_SOURCE`, `TELEDEC_CALLBACK_USER`,
+# `TELEDEC_CALLBACK_PASSWORD` sont repris pour ce processus sous leur nom
+# d'instance (`PARTIDUO_TELEDEC_…`), sauf si l'environnement les fixe déjà. Tout part sur le stage (`sandbox`) : rien n'est transmis à la
 # DGFiP, et la liasse est envoyée sans bouton « Envoyer ».
 module Teledec::SandboxSpec
   FILE = File.join(ENV["HOME"]? || "/nonexistent", ".config/partiduo/teledec-sandbox.env")
@@ -21,6 +26,8 @@ module Teledec::SandboxSpec
   EMAIL = "partiduo-stage@example.org"
   SIREN = "999888779"
   SIRET = "99988877900017"
+  # Réglages de l'instance repris du fichier (sans le préfixe `PARTIDUO_`).
+  SETTINGS = %w[TELEDEC_USER_DOMAIN TELEDEC_USER_FORMAT TELEDEC_SOURCE TELEDEC_CALLBACK_USER TELEDEC_CALLBACK_PASSWORD]
 
   def self.values : Hash(String, String)?
     return unless File.exists?(FILE)
@@ -29,6 +36,11 @@ module Teledec::SandboxSpec
       name, sep, value = line.strip.lchop("export ").partition('=')
       next if sep.empty? || name.starts_with?('#')
       values[name.strip] = value.strip.strip('"').strip('\'')
+    end
+    SETTINGS.each do |name|
+      if (value = values[name]?.presence) && !ENV.has_key?("PARTIDUO_#{name}")
+        ENV["PARTIDUO_#{name}"] = value
+      end
     end
     values if values["TELEDEC_SANDBOX_CLIENT_ID"]?.presence && values["TELEDEC_SANDBOX_CLIENT_SECRET"]?.presence
   rescue File::Error
@@ -49,7 +61,7 @@ module Teledec::SandboxSpec
   def self.account! : String
     transport.account_email(SIREN)
   rescue TransportError
-    pending!("domaine du partenaire non réglé (PARTIDUO_TELEDEC_USER_DOMAIN)")
+    pending!("domaine du partenaire non réglé (TELEDEC_USER_DOMAIN du fichier de configuration)")
   end
 
   def self.transport : HttpTransport
