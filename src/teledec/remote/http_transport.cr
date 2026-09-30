@@ -31,6 +31,14 @@ module Teledec
   #   régime fiscal du dossier (D-TDC5-002) ; la liasse porte aussi
   #   `#EMAIL` et `#MOT-DE-PASSE`.
   #
+  # * Validation facultative (`PARTIDUO_TELEDEC_SCHEMAS_DIR` : dossier des
+  #   schémas JSON officiels de TELEDEC, `Remote::Schemas`) : chaque
+  #   document est validé avant l'envoi contre le schéma de son formulaire
+  #   au bon millésime (l'enveloppe seule si le formulaire n'a pas de
+  #   schéma, un avertissement journalisé alors) ; un écart refuse l'envoi
+  #   (`teledec.errors.transport.schema`, chemin JSON cité). Sans réglage,
+  #   rien ne change (D-TDC6-003).
+  #
   # Les identifiants et le jeton ne sont jamais journalisés ni rendus ;
   # les erreurs sont des clés i18n (`teledec.errors.transport.*`) avec le
   # message de TELEDEC pour motif. Le greffe ne se dépose pas par l'API
@@ -63,16 +71,20 @@ module Teledec
     # `nil` si le réglage manque ou est invalide.
     property user_domain : String?
     property user_format : String?
+    # Schémas JSON de TELEDEC (défaut : `PARTIDUO_TELEDEC_SCHEMAS_DIR`) ;
+    # `nil` : aucune validation avant l'envoi.
+    property schemas : Remote::Schemas?
 
     @tokens = {} of String => Token
     @mutex = Mutex.new
 
     def initialize(@exchange : Remote::Exchange = Remote::Net.new, @name : String = "TELEDEC",
                    source : String? = nil, @send_button : Bool = true, @clock : Proc(Time) = -> { Time.utc },
-                   user_domain : String? = nil, user_format : String? = nil)
+                   user_domain : String? = nil, user_format : String? = nil, schemas_dir : String? = nil)
       @source = source || ENV["PARTIDUO_TELEDEC_SOURCE"]?.presence || DEFAULT_SOURCE
       @user_domain = Remote::Account.domain(user_domain || ENV[Remote::Account::DOMAIN_VARIABLE]?)
       @user_format = Remote::Account.format(user_format || ENV[Remote::Account::FORMAT_VARIABLE]?)
+      @schemas = Remote::Schemas.from(schemas_dir || ENV[Remote::Schemas::VARIABLE]?)
     end
 
     # Adresse du compte de l'entreprise de SIREN `siren` chez TELEDEC ;
@@ -110,13 +122,15 @@ module Teledec
         # « Utilisateur non trouvé » ; il est créé avant, comme pour la
         # marque blanche (D-TDC5-002).
         raise TransportError.new("teledec.errors.transport.siret") unless Remote::Formats.siret(credentials, payload.identity)
+        validate_zones!(payload)
         created = ensure_company(credentials, payload, submission, account)
         body = Remote::Formats.liasse(payload, submission, credentials, source, send_button?, account)
         response = call(credentials, "POST", "/service/liasse", body, "text/plain; charset=utf-8")
         return Submitted.new(key.to_s, link(response.body), "notcompleted", account_created: created)
       end
-      created = ensure_company(credentials, payload, submission, account)
       body = Remote::Formats.white_label(payload, submission, credentials, @clock.call, account)
+      validate_document!(payload, submission, body)
+      created = ensure_company(credentials, payload, submission, account)
       response = call(credentials, "POST", "/service/declaration-marque-blanche", body, "application/json")
       answer = parse_object(response.body)
       if message = answer["message"]?.try(&.as_s?)
@@ -200,6 +214,59 @@ module Teledec
       create_company(credentials, Remote::Formats.company_identity(payload, credentials, year_end),
         credentials.password_hash, account)
       true
+    end
+
+    # --- Validation par les schémas de TELEDEC ----------------------------------
+
+    # Document de la marque blanche validé contre le schéma de son
+    # formulaire au millésime visé (D-TDC6-003) ; sans schéma du
+    # formulaire, l'enveloppe seule, avec un avertissement.
+    private def validate_document!(payload : Payload, submission : Submission, body : String) : Nil
+      store = usable_schemas || return
+      form = Remote::Formats.form_key(payload.kind) || return
+      target = Remote::Formats.millesime_target(payload, submission.due_on)
+      outcome = store.check_document(JSON.parse(body), form, target)
+      warn_missing(outcome, target) unless outcome.millesime
+      refuse!(outcome)
+    end
+
+    # Cases jointes à la liasse (`zones_formulaires`) validées bloc par
+    # bloc contre le schéma de leur formulaire ; le texte de la balance
+    # n'a pas de schéma.
+    private def validate_zones!(payload : Payload) : Nil
+      store = usable_schemas || return
+      zones = Remote::Formats.liasse_zones(payload) || return
+      target = Remote::Formats.millesime_target(payload)
+      zones.each do |form, values|
+        outcome = store.check_block(form, JSON.parse(values.to_json), target)
+        warn_missing(outcome, target) unless outcome.checked
+        refuse!(outcome)
+      end
+    end
+
+    # Schémas réglés et présents ; un dossier réglé mais absent est signalé
+    # (rien n'est validé).
+    private def usable_schemas : Remote::Schemas?
+      store = @schemas || return
+      return store if store.present?
+      Log.warn { "TELEDEC : dossier des schémas introuvable (#{Remote::Schemas::VARIABLE}=#{store.dir}), aucune validation" }
+      nil
+    end
+
+    private def warn_missing(outcome : Remote::Schemas::Outcome, target : Int32) : Nil
+      what = outcome.checked ? "enveloppe seule validée" : "document non validé"
+      Log.warn { "TELEDEC : pas de schéma #{outcome.form} au millésime #{target} ni avant (#{what})" }
+    end
+
+    # Refus traduit du premier écart, chemin JSON cité ; le nombre des
+    # autres suit.
+    private def refuse!(outcome : Remote::Schemas::Outcome) : Nil
+      first = outcome.violations.first? || return
+      problem = I18n.t("teledec.schema.#{first.code}", first.params)
+      others = outcome.violations.size - 1
+      more = others.zero? ? "" : I18n.t("teledec.schema.more", {"count" => others.to_s})
+      raise TransportError.new("teledec.errors.transport.schema", {"schema" => outcome.schema_name,
+                                                                   "path" => first.path, "problem" => problem, "more" => more})
     end
 
     # --- HTTP -------------------------------------------------------------------

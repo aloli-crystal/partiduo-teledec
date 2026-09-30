@@ -7,10 +7,13 @@ require "http/server"
 # Suite d'intégration contre l'environnement de test (stage) de TELEDEC,
 # par l'adaptateur réel (`Teledec::HttpTransport`) : jeton, création d'une
 # entreprise de test, liasse d'une balance de démonstration (URL rendue),
-# CA3, DAS2 (jointe au formulaire principal du régime) et relevé d'acompte
+# CA3, DAS2 (seule, au millésime de sa campagne) et relevé d'acompte
 # d'IS 2571 en marque blanche, 2035 d'un libéral sans Comptabilité (seconde
 # entreprise de test, régime BNC), rappels de TELEDEC reçus par la
-# réception réelle de l'extension. Activée
+# réception réelle de l'extension. Si les schémas JSON de TELEDEC sont
+# présents (`TELEDEC_SCHEMAS_DIR`, sinon `../.teledec-doc/schemas`),
+# l'adaptateur valide chaque document avant de l'envoyer (D-TDC6-003).
+# Activée
 # seulement si `~/.config/partiduo/teledec-sandbox.env` porte
 # `TELEDEC_SANDBOX_CLIENT_ID` et `TELEDEC_SANDBOX_CLIENT_SECRET` ; aucune
 # valeur du fichier n'est jamais affichée, journalisée ni copiée (les
@@ -133,7 +136,16 @@ module Teledec::SandboxSpec
 
   def self.transport(exchange : Remote::Exchange = Remote::Net.new) : HttpTransport
     HttpTransport.new(exchange, source: instance_setting("TELEDEC_SOURCE"), send_button: false,
-      user_domain: instance_setting("TELEDEC_USER_DOMAIN"), user_format: instance_setting("TELEDEC_USER_FORMAT"))
+      user_domain: instance_setting("TELEDEC_USER_DOMAIN"), user_format: instance_setting("TELEDEC_USER_FORMAT"),
+      schemas_dir: schemas_dir)
+  end
+
+  # Schémas JSON de TELEDEC pour valider chaque document avant l'envoi :
+  # `TELEDEC_SCHEMAS_DIR`, sinon `../.teledec-doc/schemas` à côté du
+  # dépôt ; `nil` s'ils sont absents.
+  def self.schemas_dir : String?
+    dir = setting("TELEDEC_SCHEMAS_DIR") || File.expand_path("../../../.teledec-doc/schemas", __DIR__)
+    dir if File.exists?(File.join(dir, "index.json"))
   end
 
   # Échange réel qui garde le dernier corps rendu par chaque route : les
@@ -287,8 +299,8 @@ module Teledec::SandboxSpec
       nil, {"periodicity" => "month"})
   end
 
-  # DAS2 de 2025, entreprise de test à l'IS simplifié (`is_rsi` : jointe à
-  # une 2065 vide, D-TDC5-001) : une société (raison sociale et SIRET) payée de deux
+  # DAS2 de 2025, seule (formulaire principal) au millésime de sa campagne,
+  # 2026 (D-TDC6-001) : une société (raison sociale et SIRET) payée de deux
   # natures (honoraires et commissions : sous-tableau
   # `repetitionDAS2MontantSommesVersees`), une personne physique (nom,
   # prénoms, date de naissance) payée de droits d'auteur.
@@ -301,7 +313,7 @@ module Teledec::SandboxSpec
         birth_date: "1980-05-14"),
     ]
     Payload.new("das2", ["DAS2"], identity, "2025-01-01", "2025-12-31", 0, nil, nil, nil, lines,
-      {"threshold" => "1200", "tax_system" => "is_rsi"})
+      {"threshold" => "1200"})
   end
 
   # Quatrième relevé d'acompte d'IS de l'exercice 2026 : 2 500 €.
@@ -548,13 +560,20 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       status.remote_status.should eq("readytobesent")
     end
 
-    it "dépose une DAS2 en marque blanche (société à deux natures, personne physique) sans erreur bloquante de TELEDEC" do
+    it "dépose une DAS2 seule, au millésime 2026, en marque blanche (société à deux natures, personne physique) sans erreur bloquante de TELEDEC" do
+      due_on = Teledec::Calendar.das2(2025).to_s("%F")
+      # Document vérifié avant tout appel : DAS2 seule, millésime de la
+      # campagne 2026 (le stage refusait le millésime 2025, D-TDC6-001).
+      document = JSON.parse(Teledec::Remote::Formats.white_label(Sandbox.das2_payload, Sandbox.submission(Sandbox.das2_payload, due_on: due_on),
+        Teledec::Credentials.new("x", "y", "sandbox", Sandbox::EMAIL, Sandbox::SIRET), Time.utc, "compte@exemple.org"))
+      (document.as_h.keys - %w[auth identity period]).should eq(["DAS2"])
+      document["period"]["millesime"].as_i.should eq(2026)
+      document["identity"]["fullRegimeFiscal"]?.should be_nil
       Sandbox.require_stage!
       Sandbox.account!
       recorder = Sandbox::Recorder.new
       transport = Sandbox.transport(recorder)
       credentials = Sandbox.credentials
-      due_on = Teledec::Calendar.das2(2025).to_s("%F")
       submitted = Sandbox.deposit!(transport, credentials, Sandbox.submission(Sandbox.das2_payload, due_on: due_on), "DAS2")
       submitted.url.should start_with("https://stage.teledec.fr/")
       submitted.remote_id.should eq("DAS2:#{Sandbox::SIREN}:2025-12-31")

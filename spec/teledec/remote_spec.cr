@@ -162,9 +162,9 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
   end
 
   it "bloque une CA3 dont une case n'a pas de code chez TELEDEC" do
-    Formats.unmapped("vat_ca3", {"14.base" => "100", "08.base" => "10", "15" => "0"}, 2026).should eq(["14.base"])
-    Formats.unmapped("vat_ca12", {"A1" => "100", "08.base" => "10", "B2" => "5", "29" => "3"}, 2026).should eq(["29"])
-    Formats.unmapped("das2", {"x" => "1"}, 2026).should be_empty
+    Formats.unmapped("vat_ca3", {"14.base" => "100", "08.base" => "10", "15" => "0"}, 202601).should eq(["14.base"])
+    Formats.unmapped("vat_ca12", {"A1" => "100", "08.base" => "10", "B2" => "5", "29" => "3"}, 202601).should eq(["29"])
+    Formats.unmapped("das2", {"x" => "1"}, 202601).should be_empty
   end
 
   it "met la DAS2 et les relevés d'IS aux codes de leurs formulaires" do
@@ -183,8 +183,11 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     amounts["BA"].as_i.should eq(1212)
     beneficiary["AG_3251_1"].as_s.should eq("69003")
     block["repetitionDAS2TotauxSommesVersees"][0]["TA"].as_i.should eq(1212)
-    # Jointe au formulaire principal du régime (IS simplifié : 2065), vide.
-    JSON.parse(last_request("/service/declaration-marque-blanche").body)["2065"].as_h.should be_empty
+    # Seule (formulaire principal), au millésime de sa campagne : sommes
+    # de 2026, campagne 2027.
+    sent = JSON.parse(last_request("/service/declaration-marque-blanche").body)
+    (sent.as_h.keys - %w[auth identity period]).should eq(["DAS2"])
+    sent["period"]["millesime"].as_i.should eq(2027)
 
     advance = S.prepare("is_2571", fiscal_year_id: S.fiscal_year_id, number: 2, amount: BigDecimal.new(2500))
     Api.transmit(S.admin, advance.id).value!.remote_id.should eq("2571:732829320:2026-12-31:2026-06-15")
@@ -209,7 +212,7 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     Api.refresh(S.admin, advance.id).value!.status.should eq("acknowledged")
   end
 
-  it "refuse, comme le stage, un dépôt en marque blanche sans formulaire principal du régime (DAS2 seule)" do
+  it "refuse, comme le stage, un dépôt sans formulaire principal à son millésime (DAS2 au millésime 2025)" do
     S.books
     server = S.teledec.server
     basic = Base64.strict_encode("#{Teledec::SimulatedTeledec::LOGIN}:#{Teledec::SimulatedTeledec::API_KEY}")
@@ -221,7 +224,7 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
                                     "repetitionDAS2MontantSommesVersees" => [{"CA" => "H", "BA" => 1212}]}]}
     document = {"auth" => {"email" => Teledec::SimulatedTeledec::ACCOUNT, "timestamp" => stamp},
                 "identity" => {"siret" => Teledec::SimulatedTeledec::SIRET},
-                "period" => {"begin" => "2026-01-01", "end" => "2026-12-31"}, "DAS2" => das2}
+                "period" => {"begin" => "2025-01-01", "end" => "2025-12-31", "millesime" => 2025}, "DAS2" => das2}
     url = "https://stage.teledec.fr/service/declaration-marque-blanche"
     alone = server.call(Teledec::Remote::Request.new("POST", url, bearer, document.to_json))
     alone.status.should eq(400)
@@ -230,9 +233,9 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
       "logiciel de comptabilité. Un des formulaires principaux permettant l'identification du régime de " \
       "l'entreprise n'est pas présent, veuillez en saisir un dans votre payload. ISRN : 3310CA3, 3514, 3519…")
     S.teledec.deposits.should be_empty
-    joined = document.merge({"2065" => {} of String => String})
-    server.call(Teledec::Remote::Request.new("POST", url, bearer, joined.to_json)).status.should eq(200)
-    S.teledec.deposits.keys.should eq(["DAS2:732829320:2026-12-31"])
+    campaign = document.merge({"period" => {"begin" => "2025-01-01", "end" => "2025-12-31", "millesime" => 2026}})
+    server.call(Teledec::Remote::Request.new("POST", url, bearer, campaign.to_json)).status.should eq(200)
+    S.teledec.deposits.keys.should eq(["DAS2:732829320:2025-12-31"])
   end
 
   it "garde en attente un dépôt que les contrôles de TELEDEC bloquent avant l'envoi" do

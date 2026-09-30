@@ -10,7 +10,7 @@ module Teledec
   # jeton OAuth2 (`Basic`, scopes, expiration, 401), API Balance
   # (identification `#CLE valeur`, balance à huit colonnes, source
   # reconnue, URL rendue), marque blanche (horodatage de moins d'une heure,
-  # lien rendu, formulaire principal du régime exigé), suivi
+  # lien rendu, formulaire principal du régime exigé à son millésime), suivi
   # (`declaration-status`, comptes-rendus, 404 sans déclaration, compte
   # inconnu), création d'entreprise (mot de passe bcrypt ; seule à créer le
   # compte)
@@ -53,14 +53,18 @@ module Teledec
       BASE   = {"stage.teledec.fr" => "stage", "www.teledec.fr" => "prod"}
       PDF    = "%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n"
       # Formulaires principaux qui identifient le régime de l'entreprise
-      # (TVA, paiement, liasse) : un dépôt en marque blanche sans aucun
-      # d'eux — une DAS2 seule — est refusé, avec le message du stage
-      # (DECISIONS D-TDC5-001).
-      REGIME_FORMS   = %w[3310CA3 3517SCA12 3514 3519 3517BCA12A 3517DDR 2571 2572 2573 2065 2031 2035 2036 2072S]
-      NO_REGIME_FORM = "aucun formulaire de TVA ou de paiement ou de liasse n'a été trouvé dans le message envoyé " \
-                       "depuis votre logiciel de comptabilité. Un des formulaires principaux permettant " \
-                       "l'identification du régime de l'entreprise n'est pas présent, veuillez en saisir un dans " \
-                       "votre payload. ISRN : 3310CA3, 3514, 3519…"
+      # (annexe G de la page marque blanche, DAS2 comprise) : un dépôt en
+      # marque blanche sans aucun d'eux est refusé, avec le message du
+      # stage. Un formulaire ne compte qu'à partir de son premier millésime
+      # (`FIRST_MILLESIMES`) : le stage a refusé ainsi une DAS2 envoyée au
+      # millésime 2025, qui n'a pas de DAS2 (DECISIONS D-TDC6-001).
+      REGIME_FORMS = %w[3310CA3 3517SCA12 3514 2571 2572 3519 DAS2 2072S 2031 2035 2036 1329AC 1329DEF 2065 2257
+        2258]
+      FIRST_MILLESIMES = {"DAS2" => 2026}
+      NO_REGIME_FORM   = "aucun formulaire de TVA ou de paiement ou de liasse n'a été trouvé dans le message envoyé " \
+                         "depuis votre logiciel de comptabilité. Un des formulaires principaux permettant " \
+                         "l'identification du régime de l'entreprise n'est pas présent, veuillez en saisir un dans " \
+                         "votre payload. ISRN : 3310CA3, 3514, 3519…"
       UNKNOWN_USER = "Utilisateur non trouvé pour l'email fourni"
 
       # Déclaration reçue : clé de suivi (`<formulaire>:<siren>:<fin>[:<échéance>]`),
@@ -241,7 +245,7 @@ module Teledec
         period = document["period"]?.try(&.as_h?) || return json(400, {"message" => "period absent"})
         form = (Remote::Formats::FORM_KEYS.values - ["liasse"]).find { |name| document.has_key?(name) } ||
                return json(400, {"message" => "formulaire absent"})
-        return json(400, {"message" => NO_REGIME_FORM}) unless REGIME_FORMS.any? { |name| document.has_key?(name) }
+        return json(400, {"message" => NO_REGIME_FORM}) unless regime_form?(document, period)
         if form == "DAS2" && (invalid = das2_invalid(document["DAS2"]))
           return json(400, {"message" => invalid})
         end
@@ -291,6 +295,13 @@ module Teledec
       end
 
       # --- Outils -----------------------------------------------------------------
+
+      # Le document porte-t-il un formulaire principal, à un millésime où il
+      # existe (`FIRST_MILLESIMES`) ?
+      private def regime_form?(document : Hash(String, JSON::Any), period : Hash(String, JSON::Any)) : Bool
+        millesime = period["millesime"]?.try(&.as_i?) || 9999
+        REGIME_FORMS.any? { |name| document.has_key?(name) && millesime >= FIRST_MILLESIMES.fetch(name, 0) }
+      end
 
       # DAS2 : un objet `repetitionDAS2TV` par bénéficiaire, natures dans
       # `repetitionDAS2MontantSommesVersees` (réponses de TELEDEC du

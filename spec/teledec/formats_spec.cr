@@ -93,25 +93,26 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
   end
 
   describe "tables de codes" do
-    it "prend la table du millésime le plus récent applicable, la plus ancienne avant la première" do
-      Formats.codes("3310CA3", 2030)["08.base"].should eq("FP")
-      Formats.codes("3310CA3", 2020)["08.base"].should eq("FP")
-      Formats.codes("3517SCA12", 2026)["08.base"].should eq("EW")
+    it "prend la table du millésime (rang) le plus récent applicable, la plus ancienne avant la première" do
+      Formats.codes("3310CA3", 203001)["08.base"].should eq("FP")
+      Formats.codes("3310CA3", 202001)["08.base"].should eq("FP")
+      Formats.codes("3517SCA12", 202502)["08.base"].should eq("EW")
+      Formats::CA3_CODES.keys.should eq([202401])
     end
 
     it "ignore les cases nulles, les totaux et détails repris ailleurs et les sortes hors TVA" do
-      Formats.unmapped("vat_ca3", {"14.base" => "0.00", "A1" => "10"}, 2026).should be_empty
-      Formats.unmapped("vat_ca12", {"A1" => "1000", "08.base" => "1000"}, 2026).should be_empty
+      Formats.unmapped("vat_ca3", {"14.base" => "0.00", "A1" => "10"}, 202601).should be_empty
+      Formats.unmapped("vat_ca12", {"A1" => "1000", "08.base" => "1000"}, 202601).should be_empty
       # CA12 : cadre A et « dont » de la ligne 17 propres à la CA3 ; taux
       # particuliers sur une ligne (EJ, FJ) ; taxes assimilées sans total.
       Formats.unmapped("vat_ca12", {"14.tax" => "3", "A2" => "1", "A4" => "1", "A5" => "1", "B2" => "1", "B5" => "1",
-                                    "17" => "1", "29" => "4"}, 2026).should eq(["29"])
-      Formats.unmapped("liasse", {"zz" => "1"}, 2026).should be_empty
-      Formats.unmapped("inconnue", {"zz" => "1"}, 2026).should be_empty
+                                    "17" => "1", "29" => "4"}, 202601).should eq(["29"])
+      Formats.unmapped("liasse", {"zz" => "1"}, 202601).should be_empty
+      Formats.unmapped("inconnue", {"zz" => "1"}, 202601).should be_empty
     end
 
     it "reprend les codes de la CA3 confirmés par TELEDEC (A4, A5, B2, E4, E5, F1, ligne 29)" do
-      table = Formats.codes("3310CA3", 2026)
+      table = Formats.codes("3310CA3", 202601)
       {table["A4"], table["A5"], table["B2"], table["E4"], table["E5"], table["F1"], table["29"]}
         .should eq({"DK", "KV", "CC", "KW", "KX", "KZ", "KB"})
     end
@@ -119,9 +120,9 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
     it "déclare les taux particuliers de la CA3 taux par taux, sans ligne 14" do
       boxes = {"14.base" => "1500", "14.tax" => "40.50", "14.TP021.base" => "1000.40", "14.TP021.tax" => "21.01",
                "14.COR13.base" => "100", "14.COR13.tax" => "13", "14.DOM1.base" => "399.60", "14.DOM1.tax" => "6.99"}
-      Formats.unmapped("vat_ca3", boxes, 2026).should be_empty
-      Formats.unmapped("vat_ca3", {"14.base" => "50"}, 2026).should eq(["14.base"])
-      Formats.unmapped("vat_ca3", {"14.base" => "50", "14.XX9.base" => "50"}, 2026).should eq(["14.XX9.base"])
+      Formats.unmapped("vat_ca3", boxes, 202601).should be_empty
+      Formats.unmapped("vat_ca3", {"14.base" => "50"}, 202601).should eq(["14.base"])
+      Formats.unmapped("vat_ca3", {"14.base" => "50", "14.XX9.base" => "50"}, 202601).should eq(["14.XX9.base"])
       block = white_label(vat("vat_ca3", boxes))["3310CA3"].as_h
       {block["MF"], block["ME"], block["NN"], block["NP"], block["BQ"], block["CQ"]}.map(&.as_i)
         .should eq({1000, 21, 100, 13, 400, 7})
@@ -256,6 +257,9 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
         details: {"tax_system" => "is_rsi"})
       block = white_label(payload)["DAS2"]
       block["AE"].as_s.should eq("73282932000074")
+      # Établissement : désignation en 3036, SIRET en 3039 (schéma DAS2 2026).
+      block["AA_3036_1"].as_s.should eq("Atelier Brunet SARL")
+      block["AA_3039_1"].as_s.should eq("73282932000074")
       block["AA_3042_1"]?.should be_nil
       block["AA_3251_1"].as_s.should eq("69002")
       repetitions = block["repetitionDAS2TV"].as_a
@@ -296,22 +300,31 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       repetitions[2]["AE_3036_1"]?.should be_nil
     end
 
-    it "joint à la DAS2 le formulaire principal du régime, vide ; sans régime connu, refuse" do
+    it "dépose la DAS2 seule (formulaire principal), au millésime de sa campagne, régime connu ou non" do
       lines = [Payload::Das2Line.new("F2", "Agence Martin", "", "", "", "", "", "FR", {"fees" => "700"}, "700")]
-      {"is_rsi" => "2065", "is_rn" => "2065", "bic_rsi" => "2031", "bnc" => "2035", "sci" => "2072S"}.each do |system, form|
-        payload = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", das2: lines,
-          details: {"tax_system" => system})
-        document = white_label(payload)
-        document[form].as_h.should be_empty
-        (document.as_h.keys - %w[auth identity period]).sort.should eq(["DAS2", form].sort)
+      [{"tax_system" => "is_rsi"}, {} of String => String].each do |details|
+        payload = Payload.new("das2", %w[DAS2], identity, "2025-01-01", "2025-12-31", das2: lines, details: details)
+        document = white_label(payload, submission("das2", "2026-05-05"))
+        (document.as_h.keys - %w[auth identity period]).should eq(["DAS2"])
+        # Sommes versées en 2025 : campagne 2026 (seul millésime de la DAS2).
+        document["period"]["millesime"].as_i.should eq(2026)
+        document["identity"]["fullRegimeFiscal"]?.should be_nil
       end
-      {({} of String => String), {"tax_system" => "lmnp"}}.each do |details|
-        payload = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", das2: lines, details: details)
-        expect_raises(Teledec::TransportError, "teledec.errors.transport.das2_regime") { white_label(payload) }
-      end
-      # Les autres dépôts n'ont que leur formulaire.
+      # Les autres dépôts n'ont que leur formulaire, sans régime fiscal
+      # complet (réservé à l'option EDI Requête).
       document = white_label(vat("vat_ca3", {"08.base" => "100", "08.tax" => "20", "32" => "20"}))
       (document.as_h.keys - %w[auth identity period]).should eq(["3310CA3"])
+      document["identity"]["fullRegimeFiscal"]?.should be_nil
+    end
+
+    it "porte l'année de campagne : période pour la TVA, échéance pour les relevés d'IS" do
+      white_label(vat("vat_ca3", {"08.base" => "1"}, "2025-06-01", "2025-06-30"))["period"]["millesime"].as_i.should eq(2025)
+      ca12 = vat("vat_ca12", {"08.base" => "1"}, "2025-01-01", "2025-12-31", "year")
+      white_label(ca12, submission("vat_ca12", "2026-05-05"))["period"]["millesime"].as_i.should eq(2025)
+      solde = Payload.new("is_2572", %w[2572], identity, "2025-01-01", "2025-12-31", details: {"tax" => "10", "advances" => "0"})
+      white_label(solde, submission("is_2572", "2026-05-15"))["period"]["millesime"].as_i.should eq(2026)
+      advance = Payload.new("is_2571", %w[2571], identity, "2026-01-01", "2026-12-31", number: 4, details: {"amount" => "10"})
+      white_label(advance, submission("is_2571", "2026-12-15"))["period"]["millesime"].as_i.should eq(2026)
     end
 
     it "donne à l'entreprise créée son régime fiscal et son régime de TVA quand le document les porte" do
@@ -363,6 +376,8 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       lines.any?(&.starts_with?("#FORME-JURIDIQUE")).should be_false
       lines.any?(&.starts_with?("#ADRESSE-NUMERO-RUE")).should be_false
       lines.should contain("#AFFICHAGE-BOUTON-ENVOYER NON")
+      # Exercice clos le 31 décembre 2026 : campagne 2027.
+      lines.should contain("#MILLESIME 2027")
       lines.should contain("6064;Fournitures bureau A;0;0;120.00;0.00;120.00;0.00")
       zones = JSON.parse(lines.last)["zones_formulaires"]
       # Clé = code de la case seul (réponses de TELEDEC du 29 septembre 2026).
@@ -371,12 +386,26 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
 
     it "refuse toute case hors du schéma relevé des formulaires (TELEDEC l'ignorerait sans erreur)" do
       boxes = {"2035-A" => {"AA" => "1", "ZZ" => "2"}, "2065" => {"HA" => "3"}}
-      Formats.unknown_zones(boxes).should eq(["2035-A ZZ", "2065 HA"])
+      Formats.unknown_zones(boxes, 202701).should eq(["2035-A ZZ", "2065 HA"])
       payload = Payload.new("liasse", %w[2035], identity, "2026-01-01", "2026-12-31", boxes: boxes)
       error = expect_raises(Teledec::TransportError) { Formats.liasse_zones(payload) }
       error.key.should eq("teledec.errors.transport.zone_unknown")
       error.params["zones"].should eq("2035-A ZZ, 2065 HA")
-      Formats::SUFFIXED_ZONE_FORMS.should eq(%w[2065 2031])
+      Formats::SUFFIXED_ZONE_FORMS.should eq(%w[2065 2031 2035])
+    end
+
+    it "suit les zones de la 2035-B par millésime et suffixe les cases de la 2035 (schémas de TELEDEC)" do
+      Formats.unknown_zones({"2035-B" => {"DM" => "1", "DP" => "2"}}, 202601).should eq(["2035-B DM"])
+      Formats.unknown_zones({"2035-B" => {"DM" => "1", "DP" => "2"}}, 202501).should eq(["2035-B DP"])
+      Formats.unknown_zones({"2035-B" => {"AC" => "1"}}, 202401).should eq(["2035-B AC"])
+      # Exercice 2025 : campagne 2026 (2035-B sans DM).
+      payload = Payload.new("liasse", %w[2035], identity, "2025-01-01", "2025-12-31",
+        boxes: {"2035" => {"FJ" => "120"}, "2035-B" => {"CP" => "900", "DS" => "10"}})
+      zones = Formats.liasse_zones(payload) || raise "zones absentes"
+      zones["2035"].should eq({"FJ_2035" => 120_i64})
+      zones["2035B"].should eq({"CP" => 900_i64, "DS" => 10_i64})
+      bad = Payload.new("liasse", %w[2035], identity, "2025-01-01", "2025-12-31", boxes: {"2035-B" => {"DM" => "1"}})
+      expect_raises(Teledec::TransportError, "teledec.errors.transport.zone_unknown") { Formats.liasse_zones(bad) }
     end
 
     it "classe la liasse d'après ses formulaires (BIC IS/IR, réel normal ou simplifié, SCI)" do

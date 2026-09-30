@@ -41,16 +41,21 @@ describe "2035 transmise à TELEDEC (module liberal, B-TDC-004)" do
     lines.group_by { |line| {line.form, line.box} }.select { |_, same| same.size > 1 }.keys.should be_empty
   end
 
-  it "nomme les zones de la 2035, de la 2035-A et de la 2035-B par le code de la case seul" do
+  it "nomme les zones de la 2035-A et de la 2035-B par le code seul, celles de la 2035 suffixées (schéma de TELEDEC)" do
     boxes = {"2035-A" => {"EB" => "120.40", "BH" => "120.40"}, "2035-B" => {"CP" => "999.50"}, "2035" => {"FJ" => "10"}}
     payload = Payload.new("liasse", %w[2035], identity, "2026-01-01", "2026-12-31", boxes: boxes)
     zones = Formats.liasse_zones(payload) || raise "zones de la liasse absentes"
     zones["2035A"].should eq({"EB" => 120_i64, "BH" => 120_i64})
     zones["2035B"].should eq({"CP" => 1000_i64})
-    zones["2035"].should eq({"FJ" => 10_i64})
+    zones["2035"].should eq({"FJ_2035" => 10_i64})
   end
 
-  it "reprend dans l'adaptateur le schéma relevé des formulaires 2035 de TELEDEC" do
-    Formats::ZONE_CODES.transform_values(&.sort).should eq(TELEDEC_2035_CODES.transform_values(&.sort))
+  it "reprend dans l'adaptateur le schéma relevé des formulaires 2035 de TELEDEC, par millésime" do
+    # Millésime 2026 (exercice 2025) : la 2035-B n'a plus DM.
+    TELEDEC_2035_CODES.each do |form, codes|
+      Formats.zone_codes(form, 202601).sort.should eq((codes - (form == "2035-B" ? %w[DM] : [] of String)).sort)
+    end
+    union = Formats::ZONE_CODES.transform_values(&.values.flatten.uniq!.sort!)
+    union.should eq(TELEDEC_2035_CODES.transform_values(&.sort))
   end
 end

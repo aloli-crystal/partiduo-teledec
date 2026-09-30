@@ -133,7 +133,7 @@ module Teledec
       details["confidential"] = input.confidential ? "1" : "0" if input.kind == "greffe"
       boxes = nil
       if input.kind == "liasse" && tax_system == "bnc" && Sources.liberal?
-        boxes = liberal_boxes(fiscal_year.ends_on.as(Time).year, controls, details)
+        boxes = liberal_boxes(fiscal_year.ends_on.as(Time), controls, details)
       end
       {balance, previous, boxes, details}
     end
@@ -143,7 +143,7 @@ module Teledec
     private def self.liberal_content(fiscal_year, controls) : Content
       controls << warning("teledec.controls.fiscal_year_open") unless fiscal_year.closed?
       details = {"source" => "liberal"}
-      boxes = liberal_boxes(fiscal_year.ends_on.as(Time).year, controls, details)
+      boxes = liberal_boxes(fiscal_year.ends_on.as(Time), controls, details)
       {nil, nil, boxes, details}
     end
 
@@ -165,14 +165,14 @@ module Teledec
 
     # 2035 préparée par le module `liberal` (DECISIONS D-LIB-007) : cases de
     # la déclaration, empreinte de la version préparée.
-    private def self.liberal_boxes(year : Int32, controls : Array(ControlView), details : Hash(String, String)) : Hash(String, Hash(String, String))
-      prepared = Partiduo::Api::Liberal.tax_return(system, year)
+    private def self.liberal_boxes(ends_on : Time, controls : Array(ControlView), details : Hash(String, String)) : Hash(String, Hash(String, String))
+      prepared = Partiduo::Api::Liberal.tax_return(system, ends_on.year)
       controls << error("teledec.controls.liberal_not_ready", {"count" => prepared.controls.count(&.error?).to_s}) unless prepared.ready?
       details["tax_return_fingerprint"] = prepared.fingerprint
       boxes = prepared.boxes.transform_values { |values| values.transform_values { |amount| Money.euros_text(amount) } }
-      # Case hors du schéma de TELEDEC : ignorée par TELEDEC sans erreur,
-      # donc refusée ici (D-TDC3-002).
-      Remote::Formats.unknown_zones(boxes).each do |zone|
+      # Case hors du schéma de TELEDEC au millésime de la liasse : ignorée
+      # par TELEDEC sans erreur, donc refusée ici (D-TDC3-002, D-TDC6-004).
+      Remote::Formats.unknown_zones(boxes, Remote::Millesime.target("liasse", day(ends_on))).each do |zone|
         controls << error("teledec.controls.zone_unknown", {"zone" => zone})
       end
       boxes
@@ -211,7 +211,8 @@ module Teledec
       boxes = VatTotals.coherent(input.kind, raw)
       # Cases qu'aucun code du formulaire de TELEDEC ne reçoit : la
       # déclaration serait incomplète.
-      Remote::Formats.unmapped(input.kind, boxes, view.date_to.year).each do |box|
+      # Codes du millésime de la période (palier compris, D-TDC6-001).
+      Remote::Formats.unmapped(input.kind, boxes, Remote::Millesime.target(input.kind, day(view.date_to))).each do |box|
         controls << error("teledec.controls.box_unmapped", {"box" => box, "form" => forms.first})
       end
       fiscal_year = fiscal_year_for(view.date_to)
@@ -225,15 +226,15 @@ module Teledec
 
     # --- DAS2 ----------------------------------------------------------------
 
-    # Le régime d'imposition est noté dans le document (`tax_system`) : la
-    # DAS2 part jointe au formulaire principal de la liasse du régime, que
-    # TELEDEC exige pour identifier l'entreprise (DECISIONS D-TDC5-001).
+    # Le régime d'imposition, s'il est choisi, est noté dans le document
+    # (`tax_system`) : l'entreprise créée chez TELEDEC avant ce premier
+    # dépôt porte alors son vrai régime (D-TDC5-002). La DAS2 part seule
+    # (formulaire principal) : le régime n'est plus exigé (D-TDC6-001).
     private def self.das2(input, company, settings, tax_system) : Partiduo::Api::Result(Built)
       year = input.year || return Partiduo::Api::Result(Built).failure(FieldError.new("year", "teledec.errors.year.blank"))
       unless YEARS.includes?(year)
         return Partiduo::Api::Result(Built).failure(FieldError.new("year", "teledec.errors.year.invalid"))
       end
-      return Partiduo::Api::Result(Built).failure(FieldError.base("teledec.errors.settings.tax_system")) if tax_system.empty?
       controls = identity_controls(company)
       result = Das2.compute(year, Filings.das2_accounts(settings), settings.das2_threshold || Config::DAS2_THRESHOLD)
       lines = result.beneficiaries.map do |item|
@@ -268,8 +269,9 @@ module Teledec
       end
       starts_on, ends_on = Time.utc(year, 1, 1), Time.utc(year, 12, 31)
       forms = Config.forms("das2", "")
-      payload = Payload.new("das2", forms, identity(company), day(starts_on), day(ends_on), 0, nil, nil, nil, lines,
-        {"threshold" => Money.euros_text(settings.das2_threshold || Config::DAS2_THRESHOLD), "tax_system" => tax_system})
+      details = {"threshold" => Money.euros_text(settings.das2_threshold || Config::DAS2_THRESHOLD)}
+      details["tax_system"] = tax_system unless tax_system.empty?
+      payload = Payload.new("das2", forms, identity(company), day(starts_on), day(ends_on), 0, nil, nil, nil, lines, details)
       Partiduo::Api::Result(Built).success(Built.new("das2:#{year}", "das2", forms, fiscal_year_for(ends_on).try(&.id),
         year, 0, starts_on, ends_on, Calendar.das2(year), nil, payload, controls))
     end

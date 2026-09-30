@@ -66,10 +66,11 @@ document intangible une fois transmis (déclencheur PostgreSQL).
 |Interface abstraite `Teledec::Transport` ; *adaptateur réel*
 `Teledec::HttpTransport` (API partenaire de TELEDEC) : jeton OAuth2
 `client_credentials` en cache, liasse par l'API Balance (URL de la liasse
-rendue à l'utilisateur), TVA CA3 et CA12, DAS2 (jointe au formulaire
-principal de la liasse du régime, vide : TELEDEC refuse une DAS2 seule),
-relevés 2571 et 2572 par l'API marque blanche ; entreprise et compte créés
-chez TELEDEC, à leur régime, avant le premier dépôt ; suivi (`declaration-status`, comptes-rendus), rappels
+rendue à l'utilisateur), TVA CA3 et CA12, DAS2 (seule : formulaire
+principal), relevés 2571 et 2572 par l'API marque blanche, chacun au
+millésime de sa campagne ; validation facultative de chaque document par
+les schémas JSON officiels de TELEDEC avant l'envoi ; entreprise et compte
+créés chez TELEDEC, à leur régime, avant le premier dépôt ; suivi (`declaration-status`, comptes-rendus), rappels
 de TELEDEC reçus sur `/hooks/TELEDEC/callback` (mot de passe `Basic` du
 partenaire). TELEDEC
 simulé pour les specs (mêmes échanges HTTP). En repli (transport
@@ -167,7 +168,32 @@ fixe l'identifiant attendu.
 |`PARTIDUO_TELEDEC_SOURCE`
 |Valeur de `#SOURCE` de la liasse (API Balance) ; défaut `API`, valeur
 donnée par TELEDEC.
+
+|`PARTIDUO_TELEDEC_SCHEMAS_DIR`
+|Facultatif. Dossier des schémas JSON officiels de TELEDEC
+(`index.json`, `envelope.json`, `<formulaire>-<millésime>.json`, tels que
+les rend `https://app.teledec.fr/service/api-doc/schemas…`, à rafraîchir à
+chaque campagne). Réglé, l'adaptateur valide chaque document avant l'envoi
+contre le schéma de son formulaire au bon millésime (le plus récent publié
+qui ne dépasse pas celui du dépôt) : marque blanche en entier, cases jointes
+à la liasse bloc par bloc (le texte de la balance n'a pas de schéma). Un
+écart refuse l'envoi avec un message traduit qui cite le chemin JSON
+fautif (`$.DAS2.repetitionDAS2TV[0].AI : format date attendu`). Sans schéma
+du formulaire (la CA3 `3310CA3` n'est pas publiée), l'enveloppe seule est
+validée et un avertissement est journalisé ; dossier introuvable :
+avertissement, aucune validation. Sans réglage, rien ne change. Ces schémas
+sont des documents de TELEDEC : ils ne sont pas versionnés dans ce dépôt.
 |===
+
+Millésimes (année de campagne, `Teledec::Remote::Millesime`, DECISIONS
+D-TDC6-001) : liasse, année de clôture plus un pour une clôture au
+31 décembre (sinon l'année de clôture) ; DAS2, année des sommes plus un
+(la DAS2 de 2025 est au millésime 2026, le seul publié) ; TVA, année de la
+période, palier `202502` pour une période close à partir du 1er juin 2025
+(`202602` en 2026 ; le millésime 2026 de base se nomme `202601`) ; relevés
+2571 et 2572, année de l'échéance (la précédente avant mars). Le champ
+`period.millesime` et la ligne `#MILLESIME` de la liasse portent l'année
+de campagne ; le palier choisit le schéma et les codes.
 
 L'adresse des rappels est donnée à TELEDEC dans le champ `url` de chaque
 déclaration en marque blanche ; la liasse (API Balance) n'a pas de champ
@@ -184,10 +210,20 @@ TELEDEC.
 SKIP_MARTEN_CLI_PRECOMPILATION=1 shards install
 createdb --encoding=UTF8 partiduo_test_<agent>
 DATABASE_URL='postgres:///partiduo_test_<agent>?host=/tmp' crystal spec --order random
+TELEDEC_SCHEMAS_DIR=/nulle/part DATABASE_URL=… crystal spec --order random   # schémas absents : en attente
 crystal tool format src ui spec config scripts manage.cr && bin/ameba
 MARTEN_ENV=test DATABASE_URL='postgres:///partiduo_<base>?host=/tmp' crystal run manage.cr -- migrate
 crystal run manage.cr -- genmigrations teledec   # aucun écart attendu
 ----
+
+Les specs `spec/teledec/schemas_spec.cr` valident les documents produits
+par l'adaptateur réel (CA3 sur l'enveloppe, CA12, 2571, 2572, DAS2, cases
+de la 2035, 2035-A et 2035-B jointes à la liasse, puis chaque dépôt préparé
+par l'extension et envoyé au TELEDEC simulé avec la validation active)
+contre les schémas officiels, lus dans `TELEDEC_SCHEMAS_DIR` (défaut :
+`../.teledec-doc/schemas`, à côté du dépôt) ; absents, comme en CI, ces
+exemples passent en attente. La validation à l'envoi elle-même est
+vérifiée en toutes circonstances sur des schémas de fantaisie.
 
 La suite d'intégration `spec/integration/sandbox_spec.cr` vise le stage de
 TELEDEC (jamais la production) par l'adaptateur réel ; elle ne s'active que
@@ -204,7 +240,7 @@ journalisée ni copiée : les messages d'échec en sont expurgés.
 |Entreprise de test |`creation-entreprise` rattache l'entreprise fictive (SIREN `999888779`, IS `ISRS`) à son compte en marque blanche.
 |Liasse |Balance de démonstration acceptée par l'API Balance (source `API`), URL rendue, état lu.
 |CA3 |Dépôt en marque blanche, lien rendu, état `readytobesent`.
-|DAS2 |Deux bénéficiaires — une société (`AF_3036_1`, `AF_3039_1`) payée de deux natures (sous-tableau `repetitionDAS2MontantSommesVersees`), une personne physique (`AE_3036_1`, `AE_3036_2`, `AI`) — ; jointe à une 2065 vide (formulaire principal du régime IS, exigé par TELEDEC) ; lien, identifiant de suivi, état lu. Échoue si les contrôles de TELEDEC signalent `CompleteWithErrors`, avec les libellés d'erreur rendus par TELEDEC.
+|DAS2 |DAS2 de 2025 *seule* (formulaire principal), au millésime 2026 (vérifié avant l'appel) ; deux bénéficiaires — une société (`AF_3036_1`, `AF_3039_1`) payée de deux natures (sous-tableau `repetitionDAS2MontantSommesVersees`), une personne physique (`AE_3036_1`, `AE_3036_2`, `AI`) — ; lien, identifiant de suivi, état lu. Échoue si les contrôles de TELEDEC signalent `CompleteWithErrors`, avec les libellés d'erreur rendus par TELEDEC.
 |Relevé 2571 |Quatrième acompte d'IS de l'exercice 2026 (régime de l'entreprise de test remis à `ISRS` avant le dépôt) ; lien, identifiant, état ; même contrôle `CompleteWithErrors`.
 |2035 sans balance |2035 construite par l'extension dans la base de test avec le module `liberal` seul (régime BNC, exercice 2025, aucune ligne de balance), déposée pour une *seconde* entreprise fictive (SIREN `999888662`, compte distinct, créé par l'adaptateur au régime `BNC` avant la liasse) ; URL rendue, état lu. Un refus de TELEDEC, au dépôt comme au suivi, fait échouer l'exemple avec son message.
 |Rappels |Serveur de réception local ; CA3 déposée avec l'adresse publique en `url` ; la suite affiche le lien de la déclaration sur le stage et demande de l'ouvrir et de cliquer sur « Envoyer » (rien ne part à la DGFiP) ; attend un rappel authentifié en `Basic`, accepté (200) par la réception réelle de l'extension (`Teledec::Ui::CallbackHandler`, `Callbacks.authenticate`, `Callbacks.receive`) ; le même corps avec un mauvais mot de passe, ou sans en-tête, est refusé (401).
@@ -216,6 +252,9 @@ Réglages du fichier, sans le préfixe `PARTIDUO_` :
   `TELEDEC_USER_FORMAT`, `TELEDEC_SOURCE` — passés à l'adaptateur de la
   suite, jamais recopiés dans l'environnement du processus (un
   `PARTIDUO_TELEDEC_…` de l'environnement prime) ;
+* schémas : `TELEDEC_SCHEMAS_DIR` (défaut `../.teledec-doc/schemas`) ;
+  présents, l'adaptateur de la suite valide chaque document avant de
+  l'envoyer au stage ;
 * rappels : `TELEDEC_CALLBACK_URL` (adresse publique https qui mène au port
   d'écoute de l'exemple ; le chemin `/hooks/TELEDEC/callback` est ajouté
   s'il manque), `TELEDEC_CALLBACK_PASSWORD` (mot de passe des rappels du

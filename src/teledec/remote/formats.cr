@@ -21,8 +21,11 @@ module Teledec
     # * TVA, DAS2, IS : API marque blanche
     #   (`POST /service/declaration-marque-blanche`), JSON `auth`,
     #   `identity`, `period` et un bloc par formulaire en clés/valeurs ; la
-    #   DAS2 est jointe au formulaire principal de la liasse du régime,
-    #   vide (le stage refuse une DAS2 seule, D-TDC5-001).
+    #   DAS2, formulaire principal (annexe G de la page marque blanche),
+    #   part seule, au millésime de sa campagne (D-TDC6-001).
+    #
+    # Millésimes : `Millesime` ; clés et types conformes aux schémas JSON
+    # de TELEDEC (`Schemas`, D-TDC6-002 à 004).
     module Formats
       # Formulaire principal de chaque sorte, tel que TELEDEC le nomme
       # (bloc de la marque blanche, paramètre `formulaire` du suivi).
@@ -37,7 +40,8 @@ module Teledec
 
       # Cases de la CA3 de Partiduo (lignes du 3310-CA3) → codes TELEDEC du
       # formulaire `3310CA3`, par premier millésime d'application
-      # (réponses de TELEDEC du 29 septembre 2026, D-TDC3-003) : A4
+      # (réponses de TELEDEC du 29 septembre 2026, D-TDC3-003 ; clés : rang
+      # du millésime, `Millesime.rank`) : A4
       # importations `DK`, A5 sorties de régime suspensif `KV`, B2
       # acquisitions intracommunautaires `CC` ; `KW`, `KX`, `KZ` sont les
       # lignes E4, E5, F1 (opérations non imposables, pour information) ;
@@ -45,7 +49,7 @@ module Teledec
       # de ligne 14 chez TELEDEC : les opérations aux taux particuliers se
       # déclarent taux par taux (`ANNEX_CODES`).
       CA3_CODES = {
-        2024 => {
+        202401 => {
           "A1" => "CA", "A2" => "CB", "A3" => "KH", "A4" => "DK", "A5" => "KV", "B2" => "CC", "B4" => "CG",
           "B5" => "CE", "E1" => "DA", "E2" => "DB", "E4" => "KW", "E5" => "KX", "F1" => "KZ", "F2" => "DC",
           "F6" => "DD",
@@ -79,14 +83,15 @@ module Teledec
       # et taxes par taux, sans cadre A : A1, A2, A4, A5, B2 et B5 (propres
       # à la CA3, D-TDC3-003) et la ligne 17 de Partiduo (« dont TVA sur
       # acquisitions intracommunautaires », comprise dans la ligne 08) ne se
-      # transmettent pas. Taux particuliers : une seule ligne (`EJ`, `FJ`).
+      # transmettent pas (codes vérifiés sur les schémas 3517SCA12 2024 à
+      # 202601, tous entiers sauf la mention néant `SD`). Taux particuliers : une seule ligne (`EJ`, `FJ`).
       # La ligne 17 (remboursements provisionnels, `GA`) et la ligne 29
       # (crédit, `LB`) citées par TELEDEC suivent la numérotation de la
       # 3517-S : Partiduo ne calcule pas de remboursement provisionnel, son
       # crédit est sa ligne 25 (`LB`) ; ses taxes assimilées (ligne 29 de
       # Partiduo) n'ont pas de total sur la 3517-S : non transmissibles.
       CA12_CODES = {
-        2024 => {
+        202401 => {
           "08.base" => "EW", "08.tax" => "FW", "09.base" => "EF", "09.tax" => "FF", "9B.base" => "GF", "9B.tax" => "GH",
           "10.base" => "EU", "10.tax" => "FU", "11.base" => "EV", "11.tax" => "FV", "13.base" => "EG", "13.tax" => "FG",
           "A3" => "EH", "B4" => "VN", "E1" => "EB", "E2" => "EC", "F2" => "ED", "F6" => "EA",
@@ -100,26 +105,33 @@ module Teledec
       IGNORED = {"3517SCA12" => %w[A1 A2 A4 A5 B2 B5 17]}
 
       # Zones connues des formulaires de la liasse que Partiduo remplit
-      # (2035 préparée par `liberal`), relevées dans les spécifications de
-      # TELEDEC (millésimes 2025 et 2026 identiques, D-VAL-006). TELEDEC
-      # ignore *sans erreur* une clé inconnue : toute case hors de ces listes
-      # est refusée à la préparation (`teledec.controls.zone_unknown`) et à
-      # l'envoi (D-TDC3-002).
+      # (2035 préparée par `liberal`), par formulaire puis par premier
+      # millésime d'application (rang, `Millesime.rank`), relevées dans les
+      # schémas JSON de TELEDEC (2035, 2035A, 2035B de 2024 à 2026,
+      # D-TDC6-004) : la 2035-B gagne AC en 2025, AD, AE, AF, AG, DP, DQ,
+      # DR, DS en 2026 et y perd DM. TELEDEC ignore *sans erreur* une clé
+      # inconnue : toute case hors de ces listes est refusée à la
+      # préparation (`teledec.controls.zone_unknown`) et à l'envoi
+      # (D-TDC3-002).
+      ZONE_2035A = %w[
+        AA AB AC AD AE AF AG BA BB BC BD BE BF BG BH BJ BK BL BM BN BP BR BS BT BU BV EA EB EC ED EE EF EG EJ EK EL EM
+        EN FC GF GJ GL AW
+      ]
+      ZONE_2035B = %w[CA CB CC CD CE CF CG CH CK CL CM CN CP CR CS CT CX CY CZ DG DJ DK DL GK HC HE JA AB]
       ZONE_CODES = {
-        "2035-A" => %w[
-          AA AB AC AD AE AF AG BA BB BC BD BE BF BG BH BJ BK BL BM BN BP BR BS BT BU BV EA EB EC ED EE EF EG EJ EK EL EM
-          EN FC GF GJ GL AW
-        ],
-        "2035-B" => %w[
-          CA CB CC CD CE CF CG CH CK CL CM CN CP CR CS CT CX CY CZ DG AF AD AE DJ DK AC DL AG DM GK HC HE JA AB DP DQ DR
-          DS
-        ],
-        "2035" => %w[AA AB FG FH FJ FV MG NG NH NN NP NQ NR AP AL AM AJ AN AF AR AG AH AS],
+        "2035-A" => {202401 => ZONE_2035A},
+        "2035-B" => {
+          202401 => ZONE_2035B + %w[DM],
+          202501 => ZONE_2035B + %w[AC DM],
+          202601 => ZONE_2035B + %w[AC AD AE AF AG DP DQ DR DS],
+        },
+        "2035" => {202401 => %w[AA AB FG FH FJ FV MG NG NH NN NP NQ NR AP AL AM AJ AN AF AR AG AH AS]},
       }
 
       # Formulaires dont les zones portent le suffixe du formulaire dans le
-      # schéma de TELEDEC (`HA_2065`) ; ailleurs, le code de la case seul.
-      SUFFIXED_ZONE_FORMS = %w[2065 2031]
+      # schéma de TELEDEC (`HA_2065`, `FJ_2035` : les schémas de la 2035
+      # l'ont aussi, D-TDC6-004) ; ailleurs, le code de la case seul.
+      SUFFIXED_ZONE_FORMS = %w[2065 2031 2035]
 
       # Natures de la DAS2 → lettre de la DGFiP (cases 4 et 5).
       DAS2_LETTERS = {
@@ -136,22 +148,12 @@ module Teledec
         "SNC" => "SNC",
       }
 
-      # Régime d'imposition du dossier (`Config::FORMS`) → formulaire
-      # principal de sa liasse dans la marque blanche, qui identifie le
-      # régime de l'entreprise chez TELEDEC. Une DAS2 seule est refusée par
-      # le stage (« Un des formulaires principaux permettant
-      # l'identification du régime de l'entreprise n'est pas présent ») :
-      # elle part jointe au formulaire principal de la liasse, sans aucune
-      # valeur (DECISIONS D-TDC5-001).
-      REGIME_FORMS = {
-        "is_rsi" => "2065", "is_rn" => "2065", "bic_rsi" => "2031", "bic_rn" => "2031", "bnc" => "2035",
-        "sci" => "2072S",
-      }
-
       # Régime d'imposition du dossier → régime fiscal complet de TELEDEC
-      # (`fullRegimeFiscal` de `creation-entreprise`, défaut `ISRS` chez
-      # TELEDEC) : l'entreprise créée avant un dépôt porte son vrai régime
-      # (D-TDC5-002).
+      # (`fullRegimeFiscal` de `creation-entreprise`, champ facultatif de
+      # cette route, défaut `ISRS` chez TELEDEC) : l'entreprise créée avant
+      # un dépôt porte son vrai régime (D-TDC5-002, D-TDC6-005). Jamais dans
+      # l'identité d'une déclaration en marque blanche : réservé à l'option
+      # « EDI Requête » ; TELEDEC y déduit le régime des formulaires.
       FULL_REGIMES = {
         "is_rsi" => "ISRS", "is_rn" => "ISRN", "bic_rsi" => "BICRS", "bic_rn" => "BICRN", "bnc" => "BNC",
         "sci" => "RF72S",
@@ -171,34 +173,34 @@ module Teledec
         FORM_KEYS[kind]?
       end
 
-      # Table des codes d'un formulaire de TVA pour un millésime : la plus
-      # récente applicable.
-      def self.codes(form : String, millesime : Int32) : Hash(String, String)
+      # Table des codes d'un formulaire de TVA pour un millésime visé
+      # (rang, `Millesime.target`) : la plus récente applicable, la plus
+      # ancienne avant la première.
+      def self.codes(form : String, target : Int32) : Hash(String, String)
         tables = form == "3517SCA12" ? CA12_CODES : CA3_CODES
-        year = tables.keys.select(&.<=(millesime)).max? || tables.keys.min
-        tables[year]
+        tables[tables.keys.select(&.<=(target)).max? || tables.keys.min]
       end
 
       # Cases non nulles de TVA qu'aucun code TELEDEC ne reçoit (contrôle
       # bloquant à la préparation).
-      def self.unmapped(kind : String, boxes : Hash(String, String), millesime : Int32) : Array(String)
+      def self.unmapped(kind : String, boxes : Hash(String, String), target : Int32) : Array(String)
         form = form_key(kind) || return [] of String
         return [] of String unless kind.starts_with?("vat_")
         boxes.compact_map do |box, amount|
           next if Money.parse(amount).zero?
-          box unless vat_code(form, box, boxes, millesime) || vat_ignored?(form, box, boxes)
+          box unless vat_code(form, box, boxes, target) || vat_ignored?(form, box, boxes)
         end
       end
 
       # Code TELEDEC d'une case de TVA de Partiduo, `nil` s'il n'y en a pas.
       # CA3 : une ligne de l'annexe (`14.<taux>.base|tax`) va à la case de
       # son taux.
-      def self.vat_code(form : String, box : String, boxes : Hash(String, String), millesime : Int32) : String?
+      def self.vat_code(form : String, box : String, boxes : Hash(String, String), target : Int32) : String?
         if form == "3310CA3" && (match = ANNEX_BOX.match(box))
           pair = ANNEX_CODES[match[1]]? || return
           return match[2] == "base" ? pair[0] : pair[1]
         end
-        codes(form, millesime)[box]?
+        codes(form, target)[box]?
       end
 
       # Case qui ne se transmet pas, sans être une omission : total ou
@@ -256,6 +258,7 @@ module Teledec
         lines << {"REEL-NORMAL-OU-SIMPLIFIE", category.try(&.[1])}
         lines << {"EXERCICE-DATE-DEBUT", compact_day(payload.period_from)}
         lines << {"EXERCICE-DATE-FIN", compact_day(payload.period_to)}
+        lines << {"MILLESIME", millesime(payload).to_s}
         lines << {"FORME-JURIDIQUE", legal_form(identity.legal_form)}
         lines << {"ADRESSE-NUMERO-RUE", identity.street}
         lines << {"ADRESSE-CODE-POSTAL", identity.postcode}
@@ -280,14 +283,15 @@ module Teledec
 
       # Cases jointes à la liasse (2035 préparée par le module `liberal`) :
       # zones par formulaire (`2035A`), clé = code de la case seul
-      # (`"2035A": {"AA": …}`), sauf pour la 2065 et la 2031 (`HA_2065`) ;
+      # (`"2035A": {"AA": …}`), sauf pour la 2065, la 2031 et la 2035
+      # (`HA_2065`, `FJ_2035`) ;
       # montants en euros entiers ; elles priment sur la ventilation de la
       # balance. Une case hors du schéma relevé est refusée
       # (`teledec.errors.transport.zone_unknown`) : TELEDEC l'ignorerait
       # sans le dire.
       def self.liasse_zones(payload : Payload) : Hash(String, Hash(String, Int64))?
         boxes = payload.boxes || return
-        unknown = unknown_zones(boxes)
+        unknown = unknown_zones(boxes, millesime_target(payload))
         unless unknown.empty?
           raise TransportError.new("teledec.errors.transport.zone_unknown", {"zones" => unknown.join(", ")})
         end
@@ -299,14 +303,21 @@ module Teledec
         zones.empty? ? nil : zones
       end
 
-      # Cases hors du schéma relevé (`ZONE_CODES`), sous la forme
-      # `<formulaire> <case>` ; un formulaire sans schéma relevé n'a aucune
-      # case connue.
-      def self.unknown_zones(boxes : Hash(String, Hash(String, String))) : Array(String)
+      # Cases hors du schéma relevé (`ZONE_CODES`) pour le millésime visé
+      # `target` (rang), sous la forme `<formulaire> <case>` ; un formulaire
+      # sans schéma relevé n'a aucune case connue.
+      def self.unknown_zones(boxes : Hash(String, Hash(String, String)), target : Int32) : Array(String)
         boxes.flat_map do |form, values|
-          known = ZONE_CODES[form]? || [] of String
+          known = zone_codes(form, target)
           values.keys.reject { |box| known.includes?(box) }.map { |box| "#{form} #{box}" }
         end
+      end
+
+      # Zones connues d'un formulaire au millésime visé : la table la plus
+      # récente applicable, la plus ancienne avant la première.
+      def self.zone_codes(form : String, target : Int32) : Array(String)
+        tables = ZONE_CODES[form]? || return [] of String
+        tables[tables.keys.select(&.<=(target)).max? || tables.keys.min]
       end
 
       # --- Marque blanche ---------------------------------------------------------
@@ -361,37 +372,35 @@ module Teledec
                 submission.due_on.try { |day| json.field "echeance", day }
                 json.field "montant", amount
                 json.field "noPayment", amount <= 0
-                json.field "millesime", millesime(payload)
+                # Année de campagne (D-TDC6-001) ; TELEDEC déduit le palier
+                # de TVA des dates de la période.
+                json.field "millesime", millesime(payload, submission.due_on)
               end
             end
             json.field form, block
-            # DAS2 : formulaire principal du régime, vide (D-TDC5-001).
-            if payload.kind == "das2"
-              regime = regime_form(payload) || raise TransportError.new("teledec.errors.transport.das2_regime")
-              json.field regime, {} of String => String
-            end
           end
         end
       end
 
       # Régime d'imposition du dossier : celui noté dans le document
-      # (`details["tax_system"]`, DAS2), sinon celui des formulaires d'une
+      # (`details["tax_system"]`), sinon celui des formulaires d'une
       # liasse ; `nil` s'il est inconnu.
       def self.tax_system(payload : Payload) : String?
         noted = payload.details["tax_system"]?.presence
-        return noted if noted && REGIME_FORMS.has_key?(noted)
+        return noted if noted && FULL_REGIMES.has_key?(noted)
         Config::FORMS.key_for?(payload.forms) if payload.kind == "liasse"
       end
 
-      # Formulaire principal de la liasse du régime (`2065`, `2031`,
-      # `2035`, `2072S`), qui accompagne la DAS2 ; `nil` si le régime est
-      # inconnu.
-      def self.regime_form(payload : Payload) : String?
-        tax_system(payload).try { |system| REGIME_FORMS[system]? }
+      # Année de campagne du dépôt (`period.millesime`, `#MILLESIME`) :
+      # `Millesime.campaign`.
+      def self.millesime(payload : Payload, due_on : String? = nil) : Int32
+        Millesime.campaign(payload.kind, payload.period_to, due_on)
       end
 
-      def self.millesime(payload : Payload) : Int32
-        payload.period_to[0, 4].to_i
+      # Millésime visé (rang, palier de TVA compris) : schéma et tables de
+      # codes.
+      def self.millesime_target(payload : Payload, due_on : String? = nil) : Int32
+        Millesime.target(payload.kind, payload.period_to, due_on)
       end
 
       # Bloc d'une déclaration de TVA : cases traduites (euros entiers),
@@ -400,12 +409,12 @@ module Teledec
         # Totaux recalculés sur les cases arrondies (déjà fait à la
         # préparation ; sans effet sur un document cohérent).
         boxes = VatTotals.coherent(payload.kind, payload.boxes.try(&.values.first?) || {} of String => String)
-        millesime = millesime(payload)
+        target = millesime_target(payload)
         block = {} of String => JSON::Any
         boxes.each do |box, amount|
           value = integer(amount)
           next if value.zero? || vat_ignored?(form, box, boxes)
-          code = vat_code(form, box, boxes, millesime) || next
+          code = vat_code(form, box, boxes, target) || next
           block[code] = JSON::Any.new(value)
         end
         if form == "3517SCA12"
@@ -440,7 +449,9 @@ module Teledec
         {due, block}
       end
 
-      # DAS2 : établissement déclarant, *une* répétition `repetitionDAS2TV`
+      # DAS2 : établissement déclarant — désignation `AA_3036_1`, SIRET
+      # `AA_3039_1` et `AE` (schéma DAS2 2026 : 3036 est le nom, 3039
+      # l'identifiant, D-TDC6-004) —, *une* répétition `repetitionDAS2TV`
       # par bénéficiaire (SIRET de l'établissement en `AD`), ses natures dans
       # le sous-tableau `repetitionDAS2MontantSommesVersees` (`CA` lettre de
       # la DGFiP, `BA` montant), totaux par nature (D-TDC3-004). Personne
@@ -453,12 +464,15 @@ module Teledec
         identity = payload.identity
         lines = payload.das2 || [] of Payload::Das2Line
         block = {} of String => JSON::Any
-        block["AA_3039_1"] = JSON::Any.new(identity.company_name)
+        block["AA_3036_1"] = JSON::Any.new(identity.company_name)
         block["AA_3042_1"] = JSON::Any.new(identity.street) unless identity.street.empty?
         block["AA_3251_1"] = JSON::Any.new(identity.postcode) unless identity.postcode.empty?
         block["AA_3164_1"] = JSON::Any.new(identity.city) unless identity.city.empty?
         establishment = siret(credentials, identity)
-        establishment.try { |number| block["AE"] = JSON::Any.new(number) }
+        establishment.try do |number|
+          block["AA_3039_1"] = JSON::Any.new(number)
+          block["AE"] = JSON::Any.new(number)
+        end
         beneficiaries = [] of JSON::Any
         totals = Hash(String, Int64).new(0_i64)
         lines.each do |line|
