@@ -44,7 +44,6 @@ describe "Liasse fiscale (formule API Balance, ADR-007 D4)" do
     S.books
     sale("800")
     ledger = Books.ledger("O01")
-    Acc.create_account(S::SYSTEM, Acc::AccountInput.new(number: "120", label: "Résultat (bénéfice)", parent: "12")).value!
     Acc.post_closing_entry(S::SYSTEM, Acc::ClosingInput.new(fiscal_year_id: S.fiscal_year_id, ledger_id: ledger.id,
       profit_account: "120", loss_account: "120")).value!
     filing = S.liasse

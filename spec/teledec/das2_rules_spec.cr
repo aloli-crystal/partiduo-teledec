@@ -104,7 +104,6 @@ describe "DAS2 : TVA et écritures de fin d'exercice (relecture du lot T)" do
     S.books
     code = S.supplier("Cabinet Durand")
     S.fees(code, "2000")
-    Acc.create_account(S::SYSTEM, Acc::AccountInput.new(number: "120", label: "Résultat (bénéfice)", parent: "12")).value!
     Acc.post_closing_entry(S::SYSTEM, Acc::ClosingInput.new(fiscal_year_id: S.fiscal_year_id, ledger_id: Books.ledger("O01").id,
       profit_account: "120", loss_account: "120")).value!
     filing = S.prepare("das2", year: 2026)

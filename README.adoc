@@ -188,17 +188,56 @@ crystal run manage.cr -- genmigrations teledec   # aucun écart attendu
 ----
 
 La suite d'intégration `spec/integration/sandbox_spec.cr` vise le stage de
-TELEDEC (jamais la production) ; elle ne s'active que si
-`~/.config/partiduo/teledec-sandbox.env` porte `TELEDEC_SANDBOX_CLIENT_ID`
-et `TELEDEC_SANDBOX_CLIENT_SECRET` (jamais affichés ni journalisés), et
-passe en attente si le stage est injoignable depuis le processus.
+TELEDEC (jamais la production) par l'adaptateur réel ; elle ne s'active que
+si `~/.config/partiduo/teledec-sandbox.env` porte `TELEDEC_SANDBOX_CLIENT_ID`
+et `TELEDEC_SANDBOX_CLIENT_SECRET`, et passe en attente si le stage est
+injoignable depuis le processus. Aucune valeur du fichier n'est affichée,
+journalisée ni copiée : les messages d'échec en sont expurgés.
 
-Le fichier étant dans le dossier de configuration de Partiduo, les réglages
-de l'instance s'y écrivent sans le préfixe `PARTIDUO_` :
-`TELEDEC_USER_DOMAIN` (obligatoire pour les dépôts), `TELEDEC_USER_FORMAT`,
-`TELEDEC_SOURCE`, `TELEDEC_CALLBACK_USER`, `TELEDEC_CALLBACK_PASSWORD`. La
-suite les reprend sous leur nom d'instance, sauf si l'environnement les fixe
-déjà.
+[cols="1,3",options="header"]
+|===
+|Exemple |Ce qu'il vérifie
+|Stage seulement |L'environnement `sandbox` vise `https://stage.teledec.fr`.
+|Jeton |Jeton délivré ; un secret faux est refusé.
+|Entreprise de test |`creation-entreprise` rattache l'entreprise fictive (SIREN `999888779`, IS `ISRS`) à son compte en marque blanche.
+|Liasse |Balance de démonstration acceptée par l'API Balance (source `API`), URL rendue, état lu.
+|CA3 |Dépôt en marque blanche, lien rendu, état `readytobesent`.
+|DAS2 |Deux bénéficiaires — une société (`AF_3036_1`, `AF_3039_1`) payée de deux natures (sous-tableau `repetitionDAS2MontantSommesVersees`), une personne physique (`AE_3036_1`, `AE_3036_2`, `AI`) — ; lien, identifiant de suivi, état lu. Échoue si les contrôles de TELEDEC signalent `CompleteWithErrors`, avec les libellés d'erreur rendus par TELEDEC.
+|Relevé 2571 |Quatrième acompte d'IS de l'exercice 2026 (régime de l'entreprise de test remis à `ISRS` avant le dépôt) ; lien, identifiant, état ; même contrôle `CompleteWithErrors`.
+|2035 sans balance |2035 construite par l'extension dans la base de test avec le module `liberal` seul (régime BNC, exercice 2025, aucune ligne de balance), déposée pour une *seconde* entreprise fictive (SIREN `999888662`, compte distinct) ; URL rendue. Un refus de TELEDEC fait échouer l'exemple avec son message.
+|Rappels |Serveur de réception local ; CA3 déposée avec l'adresse publique en `url` ; attend un rappel authentifié en `Basic`, accepté (200) par la réception réelle de l'extension (`Teledec::Ui::CallbackHandler`, `Callbacks.authenticate`, `Callbacks.receive`) ; le même corps avec un mauvais mot de passe, ou sans en-tête, est refusé (401).
+|===
+
+Réglages du fichier, sans le préfixe `PARTIDUO_` :
+
+* instance : `TELEDEC_USER_DOMAIN` (obligatoire pour les dépôts),
+  `TELEDEC_USER_FORMAT`, `TELEDEC_SOURCE` — passés à l'adaptateur de la
+  suite, jamais recopiés dans l'environnement du processus (un
+  `PARTIDUO_TELEDEC_…` de l'environnement prime) ;
+* rappels : `TELEDEC_CALLBACK_URL` (adresse publique https qui mène au port
+  d'écoute de l'exemple ; le chemin `/hooks/TELEDEC/callback` est ajouté
+  s'il manque), `TELEDEC_CALLBACK_PASSWORD` (mot de passe des rappels du
+  partenaire, configuré chez TELEDEC), `TELEDEC_CALLBACK_USER` (facultatif),
+  `TELEDEC_CALLBACK_PORT` (défaut 8787), `TELEDEC_CALLBACK_WAIT` (secondes,
+  ou `5m` ; défaut 5 minutes). Une variable d'environnement du même nom
+  prime (utile pour l'adresse d'un tunnel éphémère). Sans adresse ni mot de
+  passe, l'exemple des rappels passe en attente (« adresse publique des
+  rappels non réglée ») ; le mot de passe n'est appliqué au processus que le
+  temps de cet exemple.
+
+Tunnel vers le port d'écoute, dans un autre terminal, puis la suite :
+
+[source,sh]
+----
+cloudflared tunnel --url http://localhost:8787   # rend https://….trycloudflare.com
+# ou : ngrok http 8787                           # rend https://….ngrok-free.app
+TELEDEC_CALLBACK_URL=https://… DATABASE_URL='postgres:///partiduo_test_<agent>?host=/tmp' \
+  crystal spec spec/integration/sandbox_spec.cr -v
+----
+
+TELEDEC ne rappelle peut-être qu'à l'envoi de la déclaration (réponses du
+29 septembre 2026 : « à l'envoi, à l'acceptation et au rejet ») : sans
+rappel dans le délai, l'exemple échoue en le disant.
 
 == Licence
 
