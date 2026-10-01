@@ -50,7 +50,7 @@ fr:
       none: "Aucune déclaration préparée pour cet exercice."
     filing:
       remote_status: "État chez TELEDEC"
-      awaiting: "TELEDEC ne trouve pas encore cette déclaration : ouvrez-la chez TELEDEC (bouton ci-dessous) pour la finaliser, puis actualisez le statut plus tard."
+      awaiting: "Déclaration à finaliser chez TELEDEC : ouvrez-la chez TELEDEC (bouton ci-dessous) pour la finaliser, puis actualisez le statut plus tard."
       summary: "Déclaration"
       company: "Entreprise"
       prepared_at: "Préparée le"

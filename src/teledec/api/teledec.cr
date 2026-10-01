@@ -29,9 +29,15 @@ module Teledec
     # États bruts d'un dépôt chez TELEDEC (normalisés en minuscules,
     # `teledec.remote_statuses.*`) ; `notfound` : le suivi ne trouve pas
     # encore la déclaration (DAS2, liasse juste après le dépôt), en attente
-    # de finalisation chez TELEDEC depuis son lien (D-TDC11-002).
-    REMOTE_STATUSES = %w[notfound notcompleted readytobesent sent completewitherrors completewithwarnings ok accepted
-      erreur rejected]
+    # de finalisation chez TELEDEC depuis son lien (D-TDC11-002) ; `created`
+    # et `waitingpayment` : états de la liste des déclarations (créée chez
+    # TELEDEC, à finaliser ; en attente du paiement, D-TDC12-003).
+    REMOTE_STATUSES = %w[notfound created notcompleted readytobesent sent waitingpayment completewitherrors
+      completewithwarnings ok accepted erreur rejected]
+
+    # États bruts d'un dépôt transmis encore à finaliser chez TELEDEC
+    # depuis son lien (invite de l'interface).
+    AWAITING_STATUSES = %w[notfound created]
 
     # Chemin des rappels de TELEDEC, exposé par l'interface.
     CALLBACK_PATH = Callbacks::PATH

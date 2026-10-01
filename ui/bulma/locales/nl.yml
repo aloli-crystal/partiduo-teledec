@@ -50,7 +50,7 @@ nl:
       none: "Geen aangifte voorbereid voor dit boekjaar."
     filing:
       remote_status: "Toestand bij TELEDEC"
-      awaiting: "TELEDEC vindt deze aangifte nog niet: open ze bij TELEDEC (knop hieronder) om ze af te ronden en vernieuw de status later."
+      awaiting: "Aangifte af te ronden bij TELEDEC: open ze bij TELEDEC (knop hieronder) om ze af te ronden en vernieuw de status later."
       summary: "Aangifte"
       company: "Onderneming"
       prepared_at: "Voorbereid op"

@@ -53,9 +53,11 @@ nl:
       other: "Andere vergoedingen"
     remote_statuses:
       notfound: "Wacht op afronding bij TELEDEC"
+      created: "Aangemaakt bij TELEDEC, af te ronden"
       notcompleted: "Aan te vullen op TELEDEC"
       readytobesent: "Klaar om vanuit TELEDEC te verzenden"
       sent: "Verzonden naar de belastingdienst"
+      waitingpayment: "Wacht op betaling"
       completewitherrors: "Controles van TELEDEC: blokkerende fouten te verbeteren op TELEDEC"
       completewithwarnings: "Controles van TELEDEC: niet-blokkerende inconsistenties"
       ok: "Aanvaard"

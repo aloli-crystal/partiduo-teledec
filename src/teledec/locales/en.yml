@@ -53,9 +53,11 @@ en:
       other: "Other remuneration"
     remote_statuses:
       notfound: "Awaiting completion at TELEDEC"
+      created: "Created at TELEDEC, to be completed"
       notcompleted: "To be completed on TELEDEC"
       readytobesent: "Ready to be sent from TELEDEC"
       sent: "Sent to the tax administration"
+      waitingpayment: "Awaiting payment"
       completewitherrors: "TELEDEC checks: blocking errors to fix on TELEDEC"
       completewithwarnings: "TELEDEC checks: non-blocking inconsistencies"
       ok: "Accepted"

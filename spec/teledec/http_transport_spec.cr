@@ -190,11 +190,41 @@ describe "Adaptateur HTTP de TELEDEC : jeton, erreurs et réponses inattendues" 
 
   it "vise www.teledec.fr en production" do
     exchange = ScriptedExchange.new.script("/service/declaration-status", 404, "{}")
+      .script("/service/declarations", 404, %({"message": "Aucune déclaration trouvée"}))
     transport(exchange).status(credentials(env: "production"), "liasse:732829320:2026-12-31").remote_status.should eq("notfound")
-    exchange.requests.last.url.should start_with("https://www.teledec.fr/service/declaration-status?")
-    exchange.requests.last.query_params["email"].should eq("teledec-732829320@partiduo.test")
-    exchange.requests.last.query_params["formulaire"].should eq("liasse")
-    exchange.requests.last.query_params["date_echeance"]?.should be_nil
+    tracked = exchange.requests.find!(&.path.==("/service/declaration-status"))
+    tracked.url.should start_with("https://www.teledec.fr/service/declaration-status?")
+    tracked.query_params["email"].should eq("teledec-732829320@partiduo.test")
+    tracked.query_params["formulaire"].should eq("liasse")
+    tracked.query_params["date_echeance"]?.should be_nil
+    # Introuvable par le suivi : la liste des déclarations, sur la même base.
+    exchange.requests.last.url.should start_with("https://www.teledec.fr/service/declarations?")
+  end
+
+  it "suit la DAS2 sous la liasse de son année ; introuvable (400 ou 404), la lit dans la liste des déclarations" do
+    listed = <<-JSON
+      [{"id": 286182, "label": "Liasse fiscale 2025", "declarationType": "Liasse", "dateDebut": "2025-01-01",
+        "dateFin": "2025-12-31", "status": "Created", "lienDeclaration": "https://stage.teledec.fr/service/declaration/eyJjeton"}]
+      JSON
+    exchange = ScriptedExchange.new.script("/service/declaration-status", 400, %({"message": "formulaire inconnu"}))
+      .script("/service/declarations", 200, listed)
+    status = transport(exchange).status(credentials, "DAS2:732829320:2025-12-31")
+    {status.state, status.remote_status, status.declaration_id}.should eq({"pending", "created", "286182"})
+    tracked = exchange.requests.find!(&.path.==("/service/declaration-status")).query_params
+    {tracked["formulaire"], tracked["date_fin"]}.should eq({"liasse", "2025-12-31"})
+    listing = exchange.requests.last.query_params
+    {listing["siren"], listing["email"]}.should eq({"732829320", "teledec-732829320@partiduo.test"})
+    status.inspect.should_not contain("eyJ")
+    # Compte inconnu : une erreur, jamais un dépôt introuvable.
+    exchange = ScriptedExchange.new.script("/service/declaration-status", 400, "Utilisateur non trouvé pour l'email fourni")
+    error_of { transport(exchange).status(credentials, "DAS2:732829320:2025-12-31") }.key.should eq("teledec.errors.transport.account")
+    exchange.count("/service/declarations").should eq(0)
+    # Hors DAS2, un 400 reste un refus.
+    exchange = ScriptedExchange.new.script("/service/declaration-status", 400, %({"message": "paramètre manquant"}))
+    error_of { transport(exchange).status(credentials, "liasse:732829320:2025-12-31") }.key.should eq("teledec.errors.transport.refused")
+    # Liste refusée ou illisible : en attente, sans erreur.
+    exchange = ScriptedExchange.new.script("/service/declaration-status", 404, "{}").script("/service/declarations", 200, "{}")
+    transport(exchange).status(credentials, "DAS2:732829320:2025-12-31").remote_status.should eq("notfound")
   end
 
   it "suit un dépôt : identifiant illisible, en attente, accusé avec PDF, rejet sans compte-rendu" do

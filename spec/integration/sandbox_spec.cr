@@ -87,9 +87,28 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       # délais et paramètres essayés, D-TDC11-002) : en attente de
       # finalisation chez TELEDEC, jamais une erreur ; s'il la trouve, ses
       # contrôles ne doivent pas être en erreur.
+      # Le suivi interroge la déclaration `liasse` de l'année, à laquelle
+      # TELEDEC rattache la DAS2, puis, à défaut, la liste des déclarations
+      # (D-TDC12-002, D-TDC12-003).
       status = Sandbox.settled_status!(recorder, transport, credentials, submitted.remote_id, "DAS2", awaiting: true)
       status.state.should eq("pending")
       status.remote_status.should_not be_empty
+      if status.remote_status == "notfound"
+        # Suivi en échec : l'état se vérifie dans la liste des déclarations
+        # (droit `liste-declarations`, accordé sur le stage).
+        listed = begin
+          transport.declarations(credentials, Sandbox::SIREN)
+        rescue ex : Teledec::TransportError
+          fail "DAS2 : liste des déclarations refusée (#{ex.key}) — #{Sandbox.scrub(ex.params.values.join(" ; "))}"
+        end
+        # Déclaration `Liasse` de l'exercice (plusieurs possibles pour
+        # l'entreprise de la suite, rejouée : au moins une).
+        found = listed.select { |item| item.declaration_type.downcase == "liasse" && item.date_fin == "2025-12-31" }
+        if found.empty?
+          fail "DAS2 : ni le suivi ni la liste des déclarations ne la trouvent (#{listed.size} déclaration(s) listée(s))"
+        end
+        found.none?(&.status.empty?).should be_true
+      end
     end
 
     it "dépose un relevé d'acompte d'IS 2571 en marque blanche (entreprise de test à l'IS), lien et état" do

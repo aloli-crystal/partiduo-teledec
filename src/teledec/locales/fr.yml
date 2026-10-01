@@ -53,9 +53,11 @@ fr:
       other: "Autres rémunérations"
     remote_statuses:
       notfound: "En attente de finalisation chez TELEDEC"
+      created: "Créée chez TELEDEC, à finaliser"
       notcompleted: "À compléter sur TELEDEC"
       readytobesent: "Prête à être envoyée depuis TELEDEC"
       sent: "Envoyée à l'administration"
+      waitingpayment: "En attente du paiement"
       completewitherrors: "Contrôles de TELEDEC : erreurs bloquantes à corriger sur TELEDEC"
       completewithwarnings: "Contrôles de TELEDEC : incohérences non bloquantes"
       ok: "Acceptée"

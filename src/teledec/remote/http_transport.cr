@@ -21,7 +21,13 @@ module Teledec
   # * Suivi par `/service/declaration-status` puis, pour un dépôt accepté ou
   #   rejeté, par les comptes-rendus (`compteRendus` du suivi, sinon
   #   `/service/recuperation-liste-compterendus`) : accusé en PDF, erreurs
-  #   de la DGFiP.
+  #   de la DGFiP. La DAS2 se suit comme la déclaration `liasse` de son
+  #   année civile, à laquelle TELEDEC la rattache (`Formats.tracking`).
+  #   Dépôt introuvable par le suivi (404, ou 400 pour la DAS2) : son état
+  #   se lit dans la liste des déclarations de l'entreprise
+  #   (`GET /service/declarations`, droit facultatif `liste-declarations`,
+  #   `declarations`) ; à défaut, il reste en attente de finalisation chez
+  #   TELEDEC (`notfound`, D-TDC12-002, D-TDC12-003).
   #
   # * Compte de l'entreprise en marque blanche (`Remote::Account`) : adresse
   #   dans le domaine du partenaire (`PARTIDUO_TELEDEC_USER_DOMAIN`,
@@ -58,14 +64,18 @@ module Teledec
     AUTH_URL       = "https://auth.partners.teledec.fr/oauth2/token"
     API_URLS       = {"sandbox" => "https://stage.teledec.fr", "production" => "https://www.teledec.fr"}
     SCOPE_PREFIXES = {"sandbox" => "stage", "production" => "prod"}
-    SCOPES         = %w[liasse marque-blanche declaration-status liste-cr creation-entreprise nouvelle-declaration]
+    SCOPES         = %w[liasse marque-blanche declaration-status liste-cr creation-entreprise nouvelle-declaration
+      liste-declarations]
     # Droits demandés seulement s'ils sont accordés : un client qui ne les
     # a pas encore (refus `invalid_scope` du service des jetons) reçoit un
     # jeton sans eux, et seul le dépôt qui les exige est refusé
     # (`teledec.errors.transport.scope`).
-    OPTIONAL_SCOPES = %w[nouvelle-declaration]
+    OPTIONAL_SCOPES = %w[nouvelle-declaration liste-declarations]
     # Droit de l'amorce du dépôt au greffe.
     GREFFE_SCOPE = "nouvelle-declaration"
+    # Droit de la liste des déclarations (`GET /service/declarations`),
+    # accordé sur le stage le 1er octobre 2026 (D-TDC12-001).
+    LIST_SCOPE = "liste-declarations"
     # Marge avant l'expiration du jeton.
     TOKEN_MARGIN = 60.seconds
     # Source déclarée dans la liasse : `API`, valeur donnée par TELEDEC
@@ -164,38 +174,49 @@ module Teledec
 
     def status(credentials : Credentials, remote_id : String, reference : String = "") : RemoteStatus
       key = Remote::Formats::Key.parse(remote_id) || raise TransportError.new("teledec.errors.transport.invalid")
+      tracked = Remote::Formats.tracking(key)
       account = account_email(key.siren)
       params = URI::Params.build do |form|
         form.add "email", account
-        form.add "siren", key.siren
-        form.add "date_fin", key.date_fin
-        form.add "formulaire", key.form
+        form.add "siren", tracked.siren
+        form.add "date_fin", tracked.date_fin
+        form.add "formulaire", tracked.form
         key.echeance.try { |day| form.add "date_echeance", day }
       end
-      response = call(credentials, "GET", "/service/declaration-status?#{params}", allow: [404])
-      # Dépôt pas encore trouvé (404) : jamais une erreur. Sur le stage, une
-      # DAS2 ou une liasse acceptée reste introuvable par le suivi juste
-      # après le dépôt, quels que soient le délai et les paramètres
-      # (D-TDC11-002) : en attente de finalisation chez TELEDEC, depuis son
-      # lien ; le suivi la relira plus tard.
-      return RemoteStatus.new("pending", remote_status: "notfound") if response.status == 404
-      answer = parse_object(response.body)
+      # DAS2 suivie sous `liasse` : un 400 vaut aussi « introuvable ».
+      allowed = tracked == key ? [404] : [400, 404]
+      response = call(credentials, "GET", "/service/declaration-status?#{params}", allow: allowed)
+      raise error(response) if response.status == 400 && account_refused?(response)
+      declaration_id = ""
+      if response.ok?
+        answer = parse_object(response.body)
+      else
+        # Dépôt introuvable par le suivi : jamais une erreur. Sur le stage,
+        # une DAS2 ou une liasse acceptée reste introuvable juste après le
+        # dépôt (D-TDC11-002) ; son état se lit alors dans la liste des
+        # déclarations (`Created` : créée chez TELEDEC, à finaliser), sinon
+        # elle est en attente de finalisation chez TELEDEC, depuis son lien
+        # (`notfound`) ; le suivi la relira plus tard (D-TDC12-003).
+        found = listed_declaration(credentials, key) || return RemoteStatus.new("pending", remote_status: "notfound")
+        answer = {"status" => JSON::Any.new(found.status)}
+        declaration_id = found.id
+      end
       raw = answer["status"]?.try { |value| value.as_s? || value.raw.to_s } || ""
       state = Remote::Formats.state(raw)
       normalized = Remote::Formats.normalize(raw)
       listed = (answer["compteRendus"]?.try(&.as_a?) || [] of JSON::Any).map { |item| Remote::Formats.report(item) }
       if state == "pending"
         document = greffe_document(credentials, key, raw, answer, listed)
-        return RemoteStatus.new("pending", remote_status: normalized, document: document)
+        return RemoteStatus.new("pending", remote_status: normalized, declaration_id: declaration_id, document: document)
       end
-      listed = reports(credentials, key) if listed.empty?
+      listed = reports(credentials, tracked) if listed.empty?
       # Comptes-rendus de cette déclaration et de cet envoi : de son type
       # (un paiement ne vaut que pour un relevé d'IS), pas d'un envoi
       # précédent (autre référence, après un rejet puis un nouvel envoi :
       # l'ancien ERREUR ne vaut pas pour le nouveau).
       kind = Remote::Formats.kind_of_form(key.form)
       reports = listed.select { |item| Remote::Formats.concerns?(item, kind) && !item.stale?(reference) }
-      return RemoteStatus.new("pending") if reports.empty? && !listed.empty?
+      return RemoteStatus.new("pending", declaration_id: declaration_id) if reports.empty? && !listed.empty?
       report = Remote::Formats.latest(reports)
       reason = report.try(&.reason).presence || answer["message"]?.try(&.as_s?).to_s
       receipt = report.try(&.pdf).try do |pdf|
@@ -203,8 +224,38 @@ module Teledec
           "application/pdf", pdf)
       end
       RemoteStatus.new(state, reason: reason, receipt: receipt, at: report.try(&.at),
-        remote_status: normalized, declaration_id: report.try(&.declaration_id) || "",
+        remote_status: normalized, declaration_id: report.try(&.declaration_id).presence || declaration_id,
         document: greffe_document(credentials, key, raw, answer, reports))
+    end
+
+    # Déclarations de l'entreprise de SIREN `siren` chez TELEDEC
+    # (`GET /service/declarations`, droit `liste-declarations`) : liste vide
+    # si TELEDEC n'en a pas (404). Les liens temporaires de la réponse ne
+    # sont ni gardés ni journalisés (`Remote::Formats::Listed`). Droit
+    # absent du jeton : `teledec.errors.transport.scope`.
+    def declarations(credentials : Credentials, siren : String) : Array(Remote::Formats::Listed)
+      require_scope!(credentials, LIST_SCOPE)
+      params = URI::Params.build do |form|
+        form.add "siren", siren
+        form.add "email", account_email(siren)
+      end
+      response = call(credentials, "GET", "/service/declarations?#{params}", allow: [404],
+        denied: {"teledec.errors.transport.scope", {"scope" => LIST_SCOPE}})
+      return [] of Remote::Formats::Listed if response.status == 404
+      list = parse(response.body).as_a? || raise TransportError.new("teledec.errors.transport.invalid")
+      list.compact_map { |item| Remote::Formats.listed(item) }
+    end
+
+    # Déclaration listée qui correspond au dépôt `key`, secours du suivi ;
+    # `nil` sans le droit `liste-declarations`, si la liste ne la porte pas
+    # (une liasse par l'API Balance n'y paraît qu'une fois son lien ouvert)
+    # ou si TELEDEC refuse la liste (le dépôt reste alors en attente).
+    private def listed_declaration(credentials : Credentials, key : Remote::Formats::Key) : Remote::Formats::Listed?
+      return unless token(credentials).scopes.includes?(LIST_SCOPE)
+      Remote::Formats.find_listed(declarations(credentials, key.siren), key)
+    rescue ex : TransportError
+      Log.info { "TELEDEC : liste des déclarations indisponible (#{ex.key})" }
+      nil
     end
 
     # PDF d'un dépôt finalisé chez TELEDEC
@@ -401,7 +452,7 @@ module Teledec
       else
         if source_refused?(message)
           TransportError.new("teledec.errors.transport.source", {"reason" => short(message)})
-        elsif message.downcase.includes?("utilisateur non trouv")
+        elsif account_refused?(response)
           TransportError.new("teledec.errors.transport.account", {"reason" => short(message)})
         elsif response.status >= 500 && message.downcase.includes?("erreur technique")
           TransportError.new("teledec.errors.transport.unreachable")
@@ -409,6 +460,12 @@ module Teledec
           TransportError.new("teledec.errors.transport.refused", {"reason" => short(message)})
         end
       end
+    end
+
+    # Refus « Utilisateur non trouvé » (compte de l'entreprise inconnu de
+    # TELEDEC) : une erreur, jamais un dépôt introuvable.
+    private def account_refused?(response : Remote::Response) : Bool
+      message_of(response.body).downcase.includes?("utilisateur non trouv")
     end
 
     # Refus de la source de la liasse (`#SOURCE`), tel que TELEDEC le

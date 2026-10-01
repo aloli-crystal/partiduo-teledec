@@ -83,10 +83,11 @@ describe "Écrans de l'adaptateur réel de TELEDEC" do
     html.should contain(%(rel="noopener noreferrer"))
   end
 
-  it "montre une DAS2 que le suivi ne trouve pas encore comme en attente de finalisation chez TELEDEC, sans erreur, jusqu'à l'ouverture de son lien" do
+  it "montre une DAS2 que le suivi ne trouve pas encore comme créée chez TELEDEC, à finaliser, sans erreur, jusqu'à l'ouverture de son lien" do
     browser = signed_in
     S.connect
-    # Comme sur le stage : suivi en 404 juste après le dépôt (D-TDC11-002).
+    # Comme sur le stage : suivi en 404 juste après le dépôt (D-TDC11-002),
+    # DAS2 listée `Created` sous la liasse de son année (D-TDC12-002).
     S.teledec.hidden_until_opened << "DAS2"
     S.fees(S.supplier("Cabinet Durand"), "1500")
     filing = S.prepare("das2", year: 2026)
@@ -94,10 +95,10 @@ describe "Écrans de l'adaptateur réel de TELEDEC" do
     browser.post("#{url}/transmit").status.should eq(302)
     browser.post("#{url}/refresh").status.should eq(302)
     view = Teledec::Api.filing(S.admin, filing.id)
-    {view.status, view.remote_status, view.last_error}.should eq({"transmitted", "notfound", ""})
+    {view.status, view.remote_status, view.last_error}.should eq({"transmitted", "created", ""})
     html = browser.get(url).html
-    html.should contain(%(data-teledec-remote-status="notfound"))
-    html.should contain("En attente de finalisation chez TELEDEC")
+    html.should contain(%(data-teledec-remote-status="created"))
+    html.should contain("Créée chez TELEDEC, à finaliser")
     html.should contain("data-teledec-awaiting")
     html.should contain("data-teledec-open")
     html.should contain("data-teledec-refresh")
@@ -107,6 +108,24 @@ describe "Écrans de l'adaptateur réel de TELEDEC" do
     html = browser.get(url).html
     html.should contain(%(data-teledec-remote-status="readytobesent"))
     html.should_not contain("data-teledec-awaiting")
+  end
+
+  it "montre une liasse que ni le suivi ni la liste ne trouvent encore comme en attente de finalisation chez TELEDEC" do
+    browser = signed_in
+    S.connect
+    # Comme sur le stage : la liasse par l'API Balance n'est ni suivie ni
+    # listée avant l'ouverture de son lien (D-TDC12-002).
+    S.teledec.hidden_until_opened << "liasse"
+    filing = S.liasse
+    url = "/ext/TELEDEC/filings/#{filing.id}"
+    browser.post("#{url}/transmit").status.should eq(302)
+    browser.post("#{url}/refresh").status.should eq(302)
+    view = Teledec::Api.filing(S.admin, filing.id)
+    {view.status, view.remote_status, view.last_error}.should eq({"transmitted", "notfound", ""})
+    html = browser.get(url).html
+    html.should contain(%(data-teledec-remote-status="notfound"))
+    html.should contain("En attente de finalisation chez TELEDEC")
+    html.should contain("data-teledec-awaiting")
   end
 
   it "n'ouvre pas une adresse de TELEDEC qui n'est pas en https" do

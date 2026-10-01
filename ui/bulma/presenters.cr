@@ -104,9 +104,10 @@ module Teledec
           "remote_status_code" => view.remote_status.presence,
           "remote_url"         => view.remote_url.presence.try { |url| url.starts_with?("https://") ? url : nil },
           # Dépôt transmis que le suivi de TELEDEC ne trouve pas encore
-          # (DAS2, liasse : 404 juste après le dépôt) : à finaliser depuis
-          # son lien, relu plus tard par le suivi.
-          "awaiting"       => view.status == "transmitted" && view.remote_status == "notfound" ? "1" : nil,
+          # (DAS2, liasse : 404 juste après le dépôt) ou que la liste dit
+          # seulement créé (`Created`) : à finaliser depuis son lien, relu
+          # plus tard par le suivi.
+          "awaiting"       => view.status == "transmitted" && Api::AWAITING_STATUSES.includes?(view.remote_status) ? "1" : nil,
           "manual"         => view.manual ? "1" : nil,
           "reason"         => view.rejection_reason.presence,
           "last_error"     => view.last_error.presence.try { |key| I18n.t(key, {"reason" => ""}) },

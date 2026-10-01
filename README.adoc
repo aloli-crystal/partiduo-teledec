@@ -71,11 +71,16 @@ ensuite relevé et conservé en pièce jointe.
 |Suivi
 |Échéances de l'exercice ; dépôts préparés, transmis, accusés (accusé
 conservé en pièce jointe du socle) ou rejetés (motif) ; historique ;
-document intangible une fois transmis (déclencheur PostgreSQL). Un dépôt
-que le suivi de TELEDEC ne trouve pas encore (404, constaté sur le stage
-pour la DAS2 et la liasse juste après le dépôt) n'est jamais une erreur :
-« En attente de finalisation chez TELEDEC », l'écran invite à l'ouvrir
-chez TELEDEC depuis son lien, et le suivi le relit plus tard.
+document intangible une fois transmis (déclencheur PostgreSQL). La DAS2,
+que TELEDEC rattache à la déclaration « Liasse » de l'exercice, est suivie
+sous `formulaire=liasse` au 31 décembre de son année. Un dépôt que le
+suivi de TELEDEC ne trouve pas (404, constaté sur le stage pour la DAS2 et
+la liasse juste après le dépôt) est cherché dans la liste des déclarations
+de l'entreprise (`GET /service/declarations`) : son état y est lu
+(« Créée chez TELEDEC, à finaliser » pour `Created`) ; sinon, « En attente
+de finalisation chez TELEDEC ». Jamais une erreur : tant que l'état est
+l'un de ces deux, l'écran invite à ouvrir la déclaration chez TELEDEC
+depuis son lien, et le suivi la relit plus tard.
 
 |Transport
 |Interface abstraite `Teledec::Transport` ; *adaptateur réel*
@@ -88,7 +93,8 @@ amorce du dépôt au greffe (`nouvelle-declaration`) et relevé de son PDF
 signé ; validation locale facultative de chaque document par les schémas
 JSON officiels de TELEDEC avant l'envoi (TELEDEC n'offre pas de validation
 sans dépôt, « dry-run ») ; entreprise et compte
-créés chez TELEDEC, à leur régime, avant le premier dépôt ; suivi (`declaration-status`, comptes-rendus), rappels
+créés chez TELEDEC, à leur régime, avant le premier dépôt ; suivi (`declaration-status`, comptes-rendus, secours par
+la liste des déclarations, dont les liens temporaires ne sont jamais gardés), rappels
 de TELEDEC reçus sur `/hooks/TELEDEC/callback` (mot de passe `Basic` du
 partenaire). TELEDEC
 simulé pour les specs (mêmes échanges HTTP). En repli (transport
@@ -211,11 +217,13 @@ C'est la seule validation sans dépôt : TELEDEC n'a pas de mode « dry-run »
 |===
 
 Droits du jeton OAuth2 (`stage/…` ou `prod/…`) : `liasse`, `marque-blanche`,
-`declaration-status`, `liste-cr`, `creation-entreprise` et
-`nouvelle-declaration` (greffe, accordé au partenaire le 1er octobre 2026).
-Si le service des jetons refuse ce dernier (`invalid_scope`), le jeton est
-pris sans lui : seul le dépôt au greffe est alors refusé, avec un message
-qui nomme le droit manquant.
+`declaration-status`, `liste-cr`, `creation-entreprise`,
+`nouvelle-declaration` (greffe, accordé au partenaire le 1er octobre 2026)
+et `liste-declarations` (liste des déclarations, accordée sur le stage le
+1er octobre 2026). Ces deux derniers sont facultatifs : si le service des
+jetons les refuse (`invalid_scope`), le jeton est pris sans eux ; seul le
+dépôt au greffe est alors refusé, avec un message qui nomme le droit
+manquant, et le suivi se passe de la liste.
 
 Millésimes (année de campagne, `Teledec::Remote::Millesime`, DECISIONS
 D-TDC6-001, D-TDC9-003, règle confirmée par TELEDEC le 1er octobre 2026) :
@@ -299,7 +307,7 @@ haché de son mot de passe : la suite les vérifie sans les afficher.
 |Entreprise de test |`creation-entreprise` rattache l'entreprise fictive (SIREN `999888779`, IS `ISRS`) à son compte en marque blanche.
 |Liasse |Balance de démonstration acceptée par l'API Balance (source `API`), URL rendue, état lu.
 |CA3 |Dépôt en marque blanche, lien rendu, état `readytobesent`.
-|DAS2 |DAS2 de 2025 *seule* (formulaire principal), au millésime 2026, régime `ISRS` dans l'identité (vérifiés avant l'appel) ; deux bénéficiaires — une société (`AF_3036_1`, `AF_3039_1`) payée de deux natures (sous-tableau `repetitionDAS2MontantSommesVersees`), une personne physique (`AE_3036_1`, `AE_3036_2`, `AI`) — ; lien, identifiant de suivi, état lu. N'exige pas que le suivi trouve aussitôt le dépôt (404 du stage : en attente de finalisation chez TELEDEC, D-TDC11-002). Échoue si les contrôles de TELEDEC signalent `CompleteWithErrors`, avec les libellés d'erreur rendus par TELEDEC.
+|DAS2 |DAS2 de 2025 *seule* (formulaire principal), au millésime 2026, régime `ISRS` dans l'identité (vérifiés avant l'appel) ; deux bénéficiaires — une société (`AF_3036_1`, `AF_3039_1`) payée de deux natures (sous-tableau `repetitionDAS2MontantSommesVersees`), une personne physique (`AE_3036_1`, `AE_3036_2`, `AI`) — ; lien, identifiant de suivi, état lu. Suivi sous `formulaire=liasse` (D-TDC12-002) ; n'exige pas qu'il trouve aussitôt le dépôt (404 du stage : en attente de finalisation chez TELEDEC, D-TDC11-002), mais vérifie alors qu'une déclaration « Liasse » de l'exercice est listée par `GET /service/declarations` (D-TDC12-003). Échoue si les contrôles de TELEDEC signalent `CompleteWithErrors`, avec les libellés d'erreur rendus par TELEDEC.
 |Relevé 2571 |Quatrième acompte d'IS de l'exercice 2026 (régime de l'entreprise de test remis à `ISRS` avant le dépôt) ; lien, identifiant, état ; même contrôle `CompleteWithErrors`.
 |2035 sans balance |2035 construite par l'extension dans la base de test avec le module `liberal` seul (régime BNC, exercice 2025, aucune ligne de balance), déposée pour une *seconde* entreprise fictive (SIREN `999888662`, compte distinct, créé par l'adaptateur au régime `BNC` avant la liasse). Avant l'appel, le corps est vérifié : aucune section de balance, section JSON dans la forme documentée (plusieurs lignes, blocs `zones_formulaires` et `informations_supplementaires`, D-TDC7-001). URL rendue, état lu. Un refus de TELEDEC, au dépôt comme au suivi, fait échouer l'exemple avec son message et la route qui a refusé (`/service/creation-entreprise` ou `/service/liasse`).
 |Greffe |Amorce `nouvelle-declaration` pour l'entreprise de test (SAS) : corps vérifié avant l'appel, adresse de redirection rendue (vérifiée sans être affichée), dépôt jamais finalisé. En attente si le jeton du stage ne porte pas encore le droit `nouvelle-declaration`.
@@ -363,28 +371,16 @@ rappels d'autres déclarations reçus entre-temps sont signalés et ignorés.
 
 `spec/integration/exploration_spec.cr` essaie sur le stage des variantes
 argumentées et dresse le tableau « variante → acceptée / refusée (message
-de TELEDEC expurgé) » : *DAS2 seule* (dix variantes : régime de
-l'entreprise à sa création, millésime, régime dans la payload, période
-réduite, CA3 déposée avant ou jointe, bloc minimal), *greffe* (amorce
-`nouvelle-declaration`, du corps minimal au corps complet, jamais
-finalisée) et *liasse* (`#CREATION-AUTO OUI` sans `creation-entreprise`,
-avec un témoin). Deuxième série : *DAS2 hors ISRS* (régime `ISRN`,
-`BICRS`, `BICRN`, `BNCDC` dans la payload, entreprise créée au même
-régime), *création BICRS* (cause du « Misformatted JSON » : forme en clair
-ou codée, omise, sans régime de TVA, témoins), *jeton du greffe* (noms du
-droit `nouvelle-declaration` présentés au service des jetons, réponse
-affichée sans le jeton, puis amorces avec le premier nom accordé) et
-*suivi* (dépôts acceptés relus après 0, 10, 30 et 60 s, puis avec des
-variantes de paramètres, et déclarations listées par TELEDEC : délai ou
-paramètres faux ?). Troisième série : *jetons de la liste* (droits
-`stage/liste-declarations` et, à part, `stage/mes-declarations` demandés au
-service des jetons, et jeton sans droit nommé ; réponse affichée sans le
-jeton), *liste* (si `liste-declarations` est accordé : DAS2 et liasse
-déposées, puis `GET /service/declarations` aussitôt et 30 s après, liens
-retirés, et suivi avec exactement le formulaire et les dates listés) et
-*lien ouvert* (après le dépôt d'une DAS2, simple `GET` de l'adresse rendue,
-redirections suivies sur le stage seulement, rien cliqué ni envoyé, puis
-suivi et liste : le dépôt n'existerait-il qu'une fois le lien ouvert ?).
+de TELEDEC expurgé) ». Les trois premières séries (DAS2 seule, greffe,
+liasse `#CREATION-AUTO`, régimes, création BICRS, noms du droit du greffe,
+délais du suivi, droits et liste des déclarations, lien ouvert) ont été
+jouées et tranchées (DECISIONS D-TDC10-*, D-TDC11-*, D-TDC12-001 et 002) :
+elles sont retirées. Quatrième série (D-TDC12-004) : *suivi de la DAS2*
+(DAS2 déposée, puis `declaration-status` avec `formulaire=liasse` et
+`date_fin` au 31 décembre de son année, puis le suivi de l'adaptateur) et
+*liasse ouverte* (liasse par l'API Balance déposée, ouverture de son
+adresse — `GET` seuls, redirections suivies, sur le stage seulement, rien
+cliqué —, puis liste et suivi `formulaire=liasse` aussitôt et 10 s après).
 Rien ne part à la DGFiP (lien sans envoi, liasse sans
 bouton « Envoyer », greffe amorcé seulement). Chaque variante a sa propre
 entreprise fictive (SIREN à clé valide `998<série><n°>` ; série

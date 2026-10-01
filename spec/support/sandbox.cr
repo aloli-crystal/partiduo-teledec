@@ -243,7 +243,7 @@ module Teledec::SandboxSpec
   end
 
   # États bruts de TELEDEC qui peuvent précéder ses contrôles.
-  UNSETTLED = {"", "notfound", "notcompleted"}
+  UNSETTLED = {"", "notfound", "created", "notcompleted"}
 
   # État du dépôt une fois lu par TELEDEC (jusqu'à 30 s) ; échec si
   # ses contrôles signalent `CompleteWithErrors`, avec les libellés de ses

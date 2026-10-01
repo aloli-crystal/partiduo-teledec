@@ -756,9 +756,54 @@ module Teledec
       # une déclaration `part`, les relevés 2571 et 2572 des `paiement`
       # (non distingués entre eux) ; le greffe, `Greffe`, ou `GreffeSeul`
       # pour un dépôt sans liasse (types de déclaration, réponses du
-      # 1er octobre 2026).
-      DECLARATION_TYPES = {"vat_ca3" => %w[tva], "vat_ca12" => %w[tva], "liasse" => %w[liasse], "das2" => %w[part],
+      # 1er octobre 2026). Chez TELEDEC, la DAS2 est rattachée à la
+      # déclaration `Liasse` de l'exercice (liste des déclarations du stage,
+      # D-TDC12-002) : ses retours peuvent aussi porter ce type.
+      DECLARATION_TYPES = {"vat_ca3" => %w[tva], "vat_ca12" => %w[tva], "liasse" => %w[liasse], "das2" => %w[part liasse],
                            "is_2571" => %w[paiement], "is_2572" => %w[paiement], "greffe" => %w[greffe greffeseul]}
+
+      # Types (`declarationType` de `GET /service/declarations`) sous
+      # lesquels TELEDEC range chaque sorte de dépôt : la DAS2 sous la
+      # déclaration `Liasse` de l'exercice (D-TDC12-002).
+      LISTED_TYPES = DECLARATION_TYPES.merge({"das2" => %w[liasse]})
+
+      # Critères du suivi (`declaration-status`) d'un dépôt : les siens, sauf
+      # la DAS2, suivie comme la déclaration `liasse` de l'exercice à
+      # laquelle TELEDEC la rattache, date de fin au 31 décembre de son
+      # année civile (`formulaire=DAS2` : 404, `Liasse` : 400 ; D-TDC12-002).
+      def self.tracking(key : Key) : Key
+        return key unless key.form == "DAS2"
+        Key.new("liasse", key.siren, "#{key.date_fin[0, 4]}-12-31")
+      end
+
+      # Déclaration listée par TELEDEC (`GET /service/declarations`) :
+      # identifiant, type, période, statut brut (`Created`, `NotCompleted`,
+      # `Sent`, `Accepted`…), libellé. Les liens temporaires de la liste
+      # (PDF, EDI, accusé : ils portent un jeton) ne sont jamais lus ni
+      # gardés.
+      record Listed, id : String, declaration_type : String, date_debut : String, date_fin : String, status : String,
+        label : String
+
+      def self.listed(any : JSON::Any) : Listed?
+        hash = any.as_h? || return
+        text = ->(name : String) do
+          value = hash[name]?
+          value.nil? || value.raw.nil? ? "" : (value.as_s? || value.raw.to_s)
+        end
+        Listed.new(text.call("id"), text.call("declarationType"), text.call("dateDebut"), text.call("dateFin"),
+          text.call("status"), text.call("label"))
+      end
+
+      # Déclaration listée qui correspond au dépôt `key` : type de sa sorte
+      # (`LISTED_TYPES`) et date de fin de son suivi (`tracking`) ; `nil`
+      # s'il n'y en a pas, ou plus d'une (acomptes d'IS d'un même exercice,
+      # par exemple : la liste ne porte pas d'échéance).
+      def self.find_listed(list : Array(Listed), key : Key) : Listed?
+        types = kind_of_form(key.form).try { |kind| LISTED_TYPES[kind]? } || return
+        date_fin = tracking(key).date_fin
+        found = list.select { |item| types.includes?(normalize(item.declaration_type)) && item.date_fin == date_fin }
+        found.first if found.size == 1
+      end
 
       # Sorte de dépôt d'un formulaire de suivi (`liasse`, `3310CA3`,
       # `greffe`…).

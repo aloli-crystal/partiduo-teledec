@@ -13,7 +13,10 @@ module Teledec
   # lien rendu, formulaire principal du régime exigé à son millésime, DAS2
   # seule avec le régime dans l'identité), suivi (`declaration-status`,
   # comptes-rendus, 404 sans déclaration ou, à la demande, avant
-  # l'ouverture du lien, compte inconnu), création d'entreprise (mot de passe bcrypt ; seule à créer le
+  # l'ouverture du lien, compte inconnu ; DAS2 rattachée à la déclaration
+  # `liasse` de son année : 404 sous `DAS2`, 400 sous `Liasse`), liste des
+  # déclarations (`GET /service/declarations`, droit `liste-declarations`,
+  # `Created` avant l'ouverture du lien, liens temporaires), création d'entreprise (mot de passe bcrypt ; seule à créer le
   # compte), amorce du dépôt au greffe (`nouvelle-declaration`, droit du
   # jeton exigé, adresse de redirection rendue), PDF du dépôt finalisé
   # (`declarationPdf`, jeton de `lienPdf`) et corps des rappels. Aucun appel réseau. Domaine des comptes en marque
@@ -39,7 +42,8 @@ module Teledec
     end
 
     delegate deposits, failure, acknowledge, reject, reject_with_errors, callback_body, expire_tokens!,
-      token_requests, requests, accounts, finalize_greffe, refused_scopes, hidden_until_opened, open_link, to: @server
+      token_requests, requests, accounts, finalize_greffe, refused_scopes, hidden_until_opened, open_link, untracked,
+      to: @server
 
     def failure=(reason : String?) : String?
       @server.failure = reason
@@ -121,6 +125,10 @@ module Teledec
       getter hidden_until_opened = Set(String).new
       # Dépôts dont le lien a été ouvert.
       getter opened = Set(String).new
+      # Formulaires que le suivi ne trouve jamais (404), même lien ouvert :
+      # leur état ne se lit que dans la liste des déclarations. Vide par
+      # défaut.
+      getter untracked = Set(String).new
       @tokens = {} of String => Token
       @next_id = 285_900_i64
 
@@ -137,6 +145,7 @@ module Teledec
         when {"POST", "/service/declaration-marque-blanche"}     then white_label(request, prefix)
         when {"GET", "/service/declaration-status"}              then status(request)
         when {"GET", "/service/recuperation-liste-compterendus"} then reports(request)
+        when {"GET", "/service/declarations"}                    then declarations(request)
         when {"POST", "/service/creation-entreprise"}            then company(request)
         when {"POST", "/service/nouvelle-declaration"}           then new_declaration(request, prefix)
         else
@@ -367,10 +376,13 @@ module Teledec
       private def status(request : Remote::Request) : Remote::Response
         params = request.query_params
         return text(400, UNKNOWN_USER) unless accounts.has_key?(params["email"]?.to_s)
+        if params["formulaire"]? == "Liasse"
+          return text(400, "Formulaire inconnu : utilisez la valeur \"liasse\" pour une liasse fiscale")
+        end
         deposit = lookup(params["formulaire"]?, params["siren"]?, params["date_fin"]?, params["date_echeance"]?)
         return text(400, UNKNOWN_USER) if deposit && deposit.email != params["email"]?
         return json(404, {"message" => "declaration not found", "status" => "ERREUR"}) unless deposit
-        if hidden_until_opened.includes?(deposit.form) && !opened.includes?(deposit.remote_id)
+        if hidden?(deposit) || untracked.includes?(deposit.form)
           return json(404, {"message" => "declaration not found", "status" => "ERREUR"})
         end
         answer = {"status" => JSON::Any.new(deposit.status)}
@@ -386,6 +398,57 @@ module Teledec
         deposit = lookup(params["formulaire"]?, params["siren"]?, params["dateFin"]?, params["date_echeance"]?)
         report = deposit.try(&.report) || return json(404, {"message" => "declaration not found", "status" => "ERREUR"})
         Remote::Response.new(200, [report].to_json, "application/json")
+      end
+
+      # Liste des déclarations de l'entreprise : droit `liste-declarations`
+      # exigé (403 sinon), `siren` et `email` exigés (400), compte connu ;
+      # 404 sans déclaration. La DAS2 paraît sous la déclaration `Liasse` de
+      # son année, `Created` tant que son lien n'est pas ouvert ; une liasse
+      # par l'API Balance n'y paraît qu'une fois son lien ouvert (constaté
+      # sur le stage, D-TDC12-002). Chaque déclaration porte des liens
+      # temporaires (jeton), que l'adaptateur ne doit jamais garder.
+      private def declarations(request : Remote::Request) : Remote::Response
+        return text(403, "Forbidden") unless scope?(request, "liste-declarations")
+        params = request.query_params
+        siren, email = params["siren"]?.to_s, params["email"]?.to_s
+        return text(400, "paramètres siren et email obligatoires") if siren.empty? || email.empty?
+        return text(400, UNKNOWN_USER) unless accounts.has_key?(email)
+        items = deposits.values.select { |item| item.remote_id.split(':')[1] == siren && item.email == email }
+        items.reject! { |item| item.form == "liasse" && hidden?(item) }
+        return json(404, {"message" => "Aucune déclaration trouvée"}) if items.empty?
+        host = items.first.env == "stage" ? "stage" : "www"
+        list = items.map do |item|
+          date_fin = item.remote_id.split(':')[2]
+          token = "eyJ#{Random::Secure.urlsafe_base64(24)}"
+          {"id"                       => JSON::Any.new(item.declaration_id),
+           "label"                    => JSON::Any.new("Déclaration #{date_fin[0, 4]}"),
+           "declarationType"          => JSON::Any.new(item.form.in?("liasse", "DAS2") ? "Liasse" : declaration_type(item.form)),
+           "dateDebut"                => JSON::Any.new("#{date_fin[0, 4]}-01-01"),
+           "dateFin"                  => JSON::Any.new(date_fin),
+           "dateHeureCreation"        => JSON::Any.new("2026-10-01T10:00:00"),
+           "status"                   => JSON::Any.new(listed_status(item)),
+           "lienDeclaration"          => JSON::Any.new("https://#{host}.teledec.fr/service/declaration/#{token}"),
+           "lienDeclarationPDF"       => JSON::Any.new("https://#{host}.teledec.fr/service/declarationPdfNom/#{token}/d.pdf"),
+           "lienAccuseDeReceptionPDF" => JSON::Any.new("https://#{host}.teledec.fr/service/accuseDeReceptionPdf/#{token}/a.pdf"),
+           "lienFichierEDI"           => JSON::Any.new("https://#{host}.teledec.fr/service/fichierEDI/#{token}/f.edi")}
+        end
+        json(200, list)
+      end
+
+      # Statut d'une déclaration dans la liste : `Created` avant l'ouverture
+      # du lien, `Accepted` ou `Rejected` après la réponse de la DGFiP.
+      private def listed_status(deposit : Deposit) : String
+        return "Created" if hidden?(deposit)
+        case deposit.status
+        when "OK"     then "Accepted"
+        when "ERREUR" then "Rejected"
+        else               deposit.status
+        end
+      end
+
+      # Dépôt que le suivi ne trouve pas avant l'ouverture de son lien.
+      private def hidden?(deposit : Deposit) : Bool
+        hidden_until_opened.includes?(deposit.form) && !opened.includes?(deposit.remote_id)
       end
 
       private def company(request : Remote::Request) : Remote::Response
@@ -443,9 +506,16 @@ module Teledec
         deposits[remote_id] = Deposit.new(remote_id, form, reference, body, prefix, email, @next_id, status, callback_url)
       end
 
+      # Dépôt suivi : sous son formulaire, sauf la DAS2, introuvable sous
+      # `DAS2` et rattachée à la déclaration `liasse` de son année (comme sur
+      # le stage, D-TDC12-002). Liasse et DAS2 d'une même année partagent
+      # cette déclaration : le suivi rend le dernier des deux déposés.
       private def lookup(form : String?, siren : String?, date_fin : String?, echeance : String?) : Deposit?
+        return if form == "DAS2"
         key = "#{form}:#{siren}:#{date_fin}"
-        deposits[echeance ? "#{key}:#{echeance}" : key]? || deposits.values.find { |item| item.remote_id.starts_with?("#{key}:") && echeance.nil? }
+        found = deposits[echeance ? "#{key}:#{echeance}" : key]? || deposits.values.find { |item| item.remote_id.starts_with?("#{key}:") && echeance.nil? }
+        return found unless form == "liasse"
+        [found, deposits["DAS2:#{siren}:#{date_fin}"]?].compact.max_by?(&.declaration_id)
       end
 
       private def report(deposit : Deposit, status : String, forms_status : String,
