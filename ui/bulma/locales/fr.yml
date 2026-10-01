@@ -14,6 +14,7 @@ fr:
       unavailable: "Transmission directe à TELEDEC désactivée sur cette instance : préparez et contrôlez vos déclarations ici, importez la balance sur le site de TELEDEC, puis notez le dépôt et son accusé."
     actions:
       open_remote: "Ouvrir sur TELEDEC"
+      open_greffe: "Finaliser le dépôt chez TELEDEC"
       show: "Afficher"
       prepare: "Préparer"
       prepare_again: "Préparer de nouveau"
@@ -24,6 +25,7 @@ fr:
       export: "Document préparé (JSON)"
       balance: "Exporter la balance (import TELEDEC)"
       receipt: "Accusé de réception"
+      document: "PDF du dépôt au greffe"
       back: "Retour aux échéances"
     deadlines:
       title: "Échéances de l'exercice"

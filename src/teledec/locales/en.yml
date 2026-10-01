@@ -66,6 +66,7 @@ en:
     events:
       manual: "Filed outside Partiduo"
       no_reason: "Reason not given"
+      document: "Registry filing PDF kept: %{filename}"
     errors:
       regime: "TELEDEC e-filings apply to French companies."
       accounting_required: "This return requires the Accounting module: without it, only the 2035 prepared by the Liberal profession module can be e-filed."
@@ -90,6 +91,8 @@ en:
         not_applicable: "Corporate tax statements only apply to companies subject to corporate tax."
       greffe:
         disabled: "Filing of accounts with the registry is not enabled in the settings."
+        legal_form: "The legal form “%{form}” does not file its accounts with the registry: only commercial companies (SARL, EURL, SAS, SASU, SA, SNC, SCS, SELARL…) are eligible; an SCI, a sole proprietorship (EI) or an association are not."
+        legal_form_missing: "Enter the company's legal form (company settings): registry filing is only offered to commercial companies."
       vat_return:
         unknown: "Unknown VAT return."
         form: "This VAT return is not of the expected form."
@@ -116,7 +119,10 @@ en:
         das2_nature: "Remuneration type \"%{nature}\" has no DAS2 letter: fix the DAS2 accounts and prepare again."
         user_domain: "Partner domain not set on this instance (PARTIDUO_TELEDEC_USER_DOMAIN): the company's TELEDEC account cannot be formed. Ask the operator to set it."
         password: "The password of the company's TELEDEC account is absent or unreadable: try again."
-        greffe: "Filing with the commercial court registry does not go through the TELEDEC API (redirection flow not yet connected): file it on the TELEDEC website."
+        greffe_legal_form: "This legal form does not file its accounts with the registry: filing refused."
+        scope: "The TELEDEC token does not carry the “%{scope}” right: ask TELEDEC to enable it for the partner, then try again."
+        no_link: "TELEDEC did not return the address where the registry filing is completed; try again later."
+        document: "The registry filing PDF could not be retrieved from TELEDEC: refresh the status later. %{reason}"
         zone_unknown: "Boxes unknown to the TELEDEC forms, which would ignore them: %{zones}."
         schema: "Document refused before sending: it does not follow the TELEDEC JSON schema %{schema} — %{path}: %{problem}%{more}. Prepare the return again, or report the discrepancy to the operator."
       credentials:
@@ -152,6 +158,7 @@ en:
       balance_empty: "The trial balance of the financial year is empty."
       balance_unbalanced: "The trial balance is not balanced (difference of %{difference})."
       fiscal_year_open: "The financial year is not closed: the trial balance may still change."
+      greffe_liasse: "The tax return of the financial year has not yet been sent to TELEDEC: the registry filing reuses it, send it first."
       corporate_tax_zero: "Zero tax amount."
       liberal_year_open: "Year %{year} is not closed: close it (2035 or cash book screen) before filing the 2035."
       liberal_not_ready:

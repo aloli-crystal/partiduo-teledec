@@ -126,7 +126,8 @@ D-TDC-001 à D-TDC-028.
   statut, contrôles ; document non relu), `filing(actor, id) : FilingView`,
   `events(actor, id)`.
 * `balance_file(actor, fiscal_year_id)`, `export_file(actor, id)`,
-  `receipt_file(actor, id)`. Sans la Comptabilité, `balance_file` lève
+  `receipt_file(actor, id)`, `document_file(actor, id)` (PDF signé d'un
+  dépôt au greffe, `FilingView#document_attachment_id`, D-TDC9-002). Sans la Comptabilité, `balance_file` lève
   `Teledec::Api::AccountingRequired` (sous-classe de `ModuleDisabled`,
   clé `teledec.errors.accounting_required`).
 
@@ -155,6 +156,13 @@ l'état par `Liberal.year` et n'appelle aucune commande du module
 
 `das2` : `year` de 2000 à 2100 (`teledec.errors.year.invalid`).
 
+`greffe` (D-TDC9-001) : forme juridique de la société qui dépose ses
+comptes (`Config.greffe_eligible?` : sociétés commerciales) ; sinon
+`teledec.errors.greffe.legal_form` (forme citée) ou
+`teledec.errors.greffe.legal_form_missing` ; l'échéance n'est pas proposée
+non plus. Avertissement `teledec.controls.greffe_liasse` tant que la liasse
+de l'exercice n'est pas transmise (TELEDEC la reprend).
+
 `FilingView#ready?`, `FilingSummaryView#ready?` : aucun contrôle bloquant (`ControlView#error?`).
 
 == Transport
@@ -165,7 +173,8 @@ abstract class Teledec::Transport
   abstract def name : String
   abstract def check(credentials : Credentials) : Nil                            # TransportError
   abstract def submit(credentials : Credentials, submission : Submission) : Submitted # remote_id, url, remote_status
-  abstract def status(credentials : Credentials, remote_id : String, reference : String = "") : RemoteStatus  # pending, acknowledged, rejected
+  abstract def status(credentials : Credentials, remote_id : String, reference : String = "") : RemoteStatus  # pending, acknowledged, rejected ; document : PDF du greffe
+  def document(credentials : Credentials, token : String, name : String) : Receipt  # PDF d'un dépôt finalisé (défaut : unsupported)
 end
 
 Teledec::Transports.current = … # Teledec::HttpTransport par défaut ; nil : repli
@@ -173,7 +182,9 @@ Teledec::Transports.current = … # Teledec::HttpTransport par défaut ; nil : r
 
 `TransportError#key` est une clé i18n (`teledec.errors.transport.*` :
 `credentials`, `refused`, `unreachable`, `source`, `account`, `email`,
-`siret`, `invalid`, `unsupported`, `das2_nature`). `Credentials#to_s` masque le secret.
+`siret`, `invalid`, `unsupported`, `das2_nature`, `greffe_legal_form`,
+`scope` (droit absent du jeton), `no_link`, `document` (PDF du greffe non
+relevé)). `Credentials#to_s` masque le secret.
 
 === Adaptateur réel `Teledec::HttpTransport`
 
@@ -183,22 +194,27 @@ Teledec::Transports.current = … # Teledec::HttpTransport par défaut ; nil : r
 
 |Jeton |`POST https://auth.partners.teledec.fr/oauth2/token`, `Basic`,
 `grant_type=client_credentials`, scopes `stage/…` (environnement de test)
-ou `prod/…` ; cache jusqu'à `expires_in` moins une minute ; 401 : nouveau
-jeton, appel rejoué une fois.
+ou `prod/…`, `nouvelle-declaration` compris (facultatif : `invalid_scope`
+→ jeton sans lui) ; cache jusqu'à `expires_in` moins une minute ; 401 :
+nouveau jeton, appel rejoué une fois.
 |Liasse |`POST /service/liasse` (texte) : `#SOURCE` (`API`), `#VERSION`,
 `#EMAIL` et `#MOT-DE-PASSE` (compte de l'entreprise, haché bcrypt), `#NOM`, `#SIRET` (obligatoire ici), `#CATEGORIE-FISCALE` et
 `#REEL-NORMAL-OU-SIMPLIFIE` (d'après les formulaires), dates d'exercice,
-forme juridique, adresse, `#AFFICHAGE-BOUTON-ENVOYER`, `#REFERENCE` ;
+`#MILLESIME` (année du lendemain de la clôture), `#CREATION-AUTO OUI`,
+forme juridique, adresse, `#AFFICHAGE-BOUTON-ENVOYER`, `#REFERENCE`,
+`#URL` (adresse des rappels ; clé réglable,
+`PARTIDUO_TELEDEC_LIASSE_CALLBACK_KEY`) ;
 balance `compte;libellé;0;0;débit;crédit;solde débit;solde crédit` ;
 2035 préparée en bloc JSON `zones_formulaires` (clé = code de la case
 seul, sauf 2065 et 2031 ; case hors du schéma relevé refusée). Réponse :
-URL de la liasse. Pas de champ d'adresse de rappel.
+URL de la liasse.
 |TVA, DAS2, IS |`POST /service/declaration-marque-blanche` (JSON `auth`,
 `identity`, `period`, bloc `3310CA3`, `3517SCA12`, `DAS2`, `2571`, `2572`) ;
 codes par millésime (`Remote::Formats`) ; CA3 : taux particuliers taux
 par taux (`ANNEX_CODES`), sans ligne 14 ; DAS2 : un `repetitionDAS2TV` par
 bénéficiaire, natures en `repetitionDAS2MontantSommesVersees` ; lien
-demandé (`retournerLien`) ; adresse de rappel en `auth.url`. Une case de
+demandé (`retournerLien`) ; adresse de rappel en `auth.url` ;
+`period.millesime` sauf pour la TVA (déduit par TELEDEC de `period.end`). Une case de
 TVA sans code bloque la préparation (`teledec.controls.box_unmapped`).
 Compte de l'entreprise créé avant la première déclaration
 (`POST /service/creation-entreprise`).
@@ -206,8 +222,13 @@ Compte de l'entreprise créé avant la première déclaration
 déclaration) ; accepté ou rejeté : compte-rendu le plus récent
 (`compteRendus`, sinon `/service/recuperation-liste-compterendus`) — accusé
 PDF, erreurs de la DGFiP (`declarationErreurs`).
-|Greffe |pas de dépôt par l'API (redirection en marque blanche, routes non
-documentées) : `teledec.errors.transport.greffe`.
+|Greffe |`POST /service/nouvelle-declaration` (droit `nouvelle-declaration`) :
+`formulaire: "greffe"`, `auth`, `identity`, `period` sur le modèle de la
+marque blanche (hypothèse D-TDC9-001) ; réponse : adresse de redirection
+(`url`, `lien`… ou texte), ouverte par l'utilisateur pour finaliser.
+Suivi par `declaration-status` (`formulaire=greffe`) ; finalisé (`Sent`,
+`OK`, `ERREUR`…) avec `lienPdf` : `GET /service/declarationPdf/{token}/teledec-liasse-fiscale.pdf`
+(D-TDC9-002), PDF conservé une fois en pièce jointe.
 |===
 
 États : `NotCompleted`, `ReadyToBeSent`, `Sent`, `CompleteWithErrors`,
@@ -227,7 +248,8 @@ empreinte SHA-256 du JSON.
 Tables `teledec_settings` (ligne unique ; email de contact, SIRET, haché
 bcrypt du mot de passe du compte de l'entreprise chez TELEDEC et
 environnement où il a été créé ; ancien jeton des rappels vidé), `teledec_filing` (suivi chez TELEDEC :
-`remote_reference`, `remote_status`, `remote_url`, `declaration_id` ; valeurs
+`remote_reference`, `remote_status`, `remote_url`, `declaration_id`,
+`document_attachment_id` (PDF du greffe, migration 0007) ; valeurs
 contrôlées, clés étrangères vers `core_attachment` (accusé),
 `core_fiscal_year` et `auth_user` (auteurs, `ON DELETE SET NULL`), déclencheur
 `teledec_filing_guard` : document intangible une fois transmis, accusé

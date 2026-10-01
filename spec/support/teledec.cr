@@ -27,10 +27,12 @@ module Teledec
       @@fiscal_year_id
     end
 
-    # Dossier français, exercice 2026, administrateur, TELEDEC actif ;
-    # régime IS simplifié et CA3 mensuelle par défaut.
+    # Dossier français (Atelier Brunet, SARL : forme qui dépose ses comptes
+    # au greffe), exercice 2026, administrateur, TELEDEC actif ; régime IS
+    # simplifié et CA3 mensuelle par défaut.
     def self.books(tax_system : String = "is_rsi", vat_system : String = "ca3_monthly", greffe : Bool = false) : Nil
       PartiduoUi::Reference.provision("fr")
+      legal_form("SARL")
       @@fiscal_year_id = PartiduoUi::Reference.fiscal_year(2026).id
       @@admin_id = PartiduoUi::Accounts.create.user.id
       Partiduo::Api::Modules.activate(SYSTEM, CODE).value!
@@ -38,6 +40,13 @@ module Teledec
         Acc.create_account(SYSTEM, Acc::AccountInput.new(number: number, label: "Honoraires #{number}", parent: "62")).value!
       end
       Api.update_settings(SYSTEM, Api::SettingsInput.new(tax_system, vat_system, greffe)).value!
+      nil
+    end
+
+    # Forme juridique de la société des specs (texte libre du socle).
+    def self.legal_form(form : String) : Nil
+      core = Partiduo::Api::Core
+      core.update_settings(SYSTEM, core.settings(SYSTEM).to_input.copy_with(legal_form: form)).value!
       nil
     end
 

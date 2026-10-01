@@ -72,12 +72,17 @@ module Teledec
     # --- Liasse, greffe, IS --------------------------------------------------
 
     private def self.yearly(input, company, settings, fiscal_year, tax_system, accounting) : Partiduo::Api::Result(Built)
-      if invalid = yearly_error(input, settings, tax_system)
+      if invalid = yearly_error(input, settings, tax_system) || greffe_error(input, company)
         return Partiduo::Api::Result(Built).failure(invalid)
       end
       starts_on = fiscal_year.starts_on.as(Time)
       ends_on = fiscal_year.ends_on.as(Time)
       controls = identity_controls(company)
+      # Le dépôt au greffe reprend chez TELEDEC la liasse de l'exercice
+      # (D-TDC9-001) : avertissement tant qu'elle n'y est pas transmise.
+      if input.kind == "greffe" && !Filing.filter(key: "liasse:#{fiscal_year.id}", status__in: %w[transmitted acknowledged]).exists?
+        controls << warning("teledec.controls.greffe_liasse")
+      end
       number = input.kind == "is_2571" ? input.number : 0
       content = case input.kind
                 when "liasse", "greffe"
@@ -108,6 +113,15 @@ module Teledec
       return FieldError.new("amount", "teledec.errors.amount.invalid") if input.kind == "is_2571" && amount.nil?
       return FieldError.new("amount", "teledec.errors.amount.invalid") if amount && amount < 0
       nil
+    end
+
+    # Greffe : seules les formes juridiques qui déposent leurs comptes y
+    # sont admises (`Config.greffe_eligible?`, D-TDC9-001).
+    def self.greffe_error(input : Api::PrepareInput, company : Core::SettingsView) : FieldError?
+      return unless input.kind == "greffe"
+      form = company.legal_form.strip
+      return FieldError.base("teledec.errors.greffe.legal_form_missing") if form.empty?
+      FieldError.base("teledec.errors.greffe.legal_form", {"form" => form}) unless Config.greffe_eligible?(form)
     end
 
     private def self.yearly_due(kind : String, starts_on : Time, ends_on : Time, number : Int32) : Time?

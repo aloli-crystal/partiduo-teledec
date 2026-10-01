@@ -68,8 +68,10 @@ module Teledec
         filing.transmitted_by_id = nil
         filing.rejected_at = nil
         # Pièce du rejet noté à la main : elle reste dans les pièces jointes
-        # du socle, mais n'est pas l'accusé du nouveau dépôt.
+        # du socle, mais n'est pas l'accusé du nouveau dépôt (de même pour
+        # le PDF d'un dépôt au greffe rejeté).
         filing.receipt_attachment_id = nil
+        filing.document_attachment_id = nil
         filing.acknowledged_at = nil
         filing.save!
         event(filing, "prepared", "", user_id)
@@ -198,6 +200,21 @@ module Teledec
       end
     end
 
+    # Conserve le PDF signé d'un dépôt au greffe en pièce jointe du socle
+    # (`document_attachment_id`), une fois : un PDF déjà conservé n'est pas
+    # remplacé. Appelé dans une transaction qui tient le verrou des dépôts ;
+    # rend l'échec du socle s'il refuse la pièce.
+    def self.store_document(filing : Filing, document : Receipt, user_id : Int64?) : Array(FieldError)
+      return [] of FieldError unless filing.document_attachment_id.nil?
+      input = Partiduo::Api::Core::AttachmentInput.new(document.filename, document.content_type,
+        IO::Memory.new(document.content))
+      stored = Partiduo::Api::Core.store_attachment(Partiduo::Api::Actor.system, input)
+      return stored.errors if stored.failure?
+      filing.document_attachment_id = stored.value!.id
+      event(filing, filing.status.to_s, I18n.t("teledec.events.document", {"filename" => document.filename}), user_id)
+      [] of FieldError
+    end
+
     # --- Vues ------------------------------------------------------------------
 
     def self.view(filing : Filing) : Api::FilingView
@@ -246,6 +263,7 @@ module Teledec
         rejection_reason: filing.rejection_reason.to_s,
         last_error: filing.last_error.to_s,
         receipt_attachment_id: filing.receipt_attachment_id.try(&.to_i64),
+        document_attachment_id: filing.document_attachment_id.try(&.to_i64),
         prepared_at: filing.prepared_at!,
         transmitted_at: filing.transmitted_at,
         acknowledged_at: filing.acknowledged_at,
@@ -319,7 +337,11 @@ module Teledec
       end
       das2_from = Time.utc(ends_on.year, 1, 1)
       add.call("das2:#{ends_on.year}", "das2", 0, das2_from, Time.utc(ends_on.year, 12, 31), Calendar.das2(ends_on.year), nil)
-      add.call("greffe:#{fiscal_year.id}", "greffe", 0, starts_on, ends_on, Calendar.greffe(ends_on), nil) if settings.greffe
+      # Greffe : option active et forme juridique qui dépose ses comptes
+      # (D-TDC9-001).
+      if settings.greffe && Config.greffe_eligible?(Partiduo::Api::Core.settings(Builder.system).legal_form)
+        add.call("greffe:#{fiscal_year.id}", "greffe", 0, starts_on, ends_on, Calendar.greffe(ends_on), nil)
+      end
       deadlines.sort_by! { |item| {item.due_on, item.key} }
     end
 

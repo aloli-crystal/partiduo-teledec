@@ -66,6 +66,7 @@ nl:
     events:
       manual: "Buiten Partiduo ingediend"
       no_reason: "Reden niet meegedeeld"
+      document: "Pdf van de neerlegging bij de griffie bewaard: %{filename}"
     errors:
       regime: "Elektronische aangiften via TELEDEC gelden voor Franse dossiers."
       accounting_required: "Deze aangifte vereist de module Boekhouding: zonder die module kan alleen de 2035 van de module Vrij beroep elektronisch worden ingediend."
@@ -90,6 +91,8 @@ nl:
         not_applicable: "Opgaven van vennootschapsbelasting gelden alleen voor vennootschappen die eraan onderworpen zijn."
       greffe:
         disabled: "Neerlegging bij de griffie is niet ingeschakeld in de instellingen."
+        legal_form: "De rechtsvorm „%{form}” legt geen jaarrekening neer bij de griffie: alleen handelsvennootschappen (SARL, EURL, SAS, SASU, SA, SNC, SCS, SELARL…) komen in aanmerking; een SCI, een eenmanszaak (EI) of een vereniging niet."
+        legal_form_missing: "Vul de rechtsvorm van de vennootschap in (instellingen van de vennootschap): neerlegging bij de griffie wordt alleen aan handelsvennootschappen aangeboden."
       vat_return:
         unknown: "Onbekende btw-aangifte."
         form: "Deze btw-aangifte heeft niet het verwachte formulier."
@@ -116,7 +119,10 @@ nl:
         das2_nature: "Vergoedingssoort \"%{nature}\" heeft geen DAS2-letter: corrigeer de DAS2-rekeningen en bereid opnieuw voor."
         user_domain: "Domein van de partner niet ingesteld op deze instantie (PARTIDUO_TELEDEC_USER_DOMAIN): de TELEDEC-account van de onderneming kan niet worden gevormd. Vraag de beheerder het in te stellen."
         password: "Wachtwoord van de TELEDEC-account van de onderneming ontbreekt of is onleesbaar: probeer opnieuw."
-        greffe: "De neerlegging bij de griffie verloopt niet via de API van TELEDEC (omleidingstraject nog niet aangesloten): dien ze in op de website van TELEDEC."
+        greffe_legal_form: "Deze rechtsvorm legt geen jaarrekening neer bij de griffie: neerlegging geweigerd."
+        scope: "Het token van TELEDEC draagt het recht „%{scope}” niet: vraag TELEDEC het voor de partner te activeren en probeer opnieuw."
+        no_link: "TELEDEC gaf het adres niet terug waar de neerlegging bij de griffie wordt afgerond; probeer later opnieuw."
+        document: "De pdf van de neerlegging bij de griffie kon niet bij TELEDEC worden opgehaald: werk de status later bij. %{reason}"
         zone_unknown: "Vakken onbekend in de formulieren van TELEDEC, die ze zou negeren: %{zones}."
         schema: "Document geweigerd vóór verzending: het volgt het JSON-schema %{schema} van TELEDEC niet — %{path}: %{problem}%{more}. Bereid de aangifte opnieuw voor, of meld de afwijking aan de beheerder."
       credentials:
@@ -152,6 +158,7 @@ nl:
       balance_empty: "De proef- en saldibalans van het boekjaar is leeg."
       balance_unbalanced: "De proef- en saldibalans is niet in evenwicht (verschil van %{difference})."
       fiscal_year_open: "Het boekjaar is niet afgesloten: de balans kan nog wijzigen."
+      greffe_liasse: "De aangifte van het boekjaar is nog niet naar TELEDEC verzonden: de neerlegging bij de griffie neemt ze over, verzend ze eerst."
       corporate_tax_zero: "Belastingbedrag nul."
       liberal_year_open: "Het boekjaar %{year} is niet afgesloten: sluit het af (scherm 2035 of kasboek) vóór de indiening van de 2035."
       liberal_not_ready:

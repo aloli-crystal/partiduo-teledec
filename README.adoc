@@ -54,8 +54,13 @@ naissance, les autres en raison sociale.
 déduits).
 
 |Greffe
-|Dépôt des comptes annuels, en option, avec la déclaration de
-confidentialité.
+|Dépôt des comptes annuels, en option, pour les seules formes juridiques
+qui déposent leurs comptes (sociétés commerciales : SARL, EURL, SAS, SASU,
+SA, SCA, SNC, SCS, sociétés d'exercice libéral à forme commerciale ; une
+SCI, une EI ou une association sont refusées, message traduit). Amorcé chez
+TELEDEC (`nouvelle-declaration`) : l'utilisateur finalise le dépôt sur
+l'écran de TELEDEC ouvert dans un nouvel onglet ; le PDF signé du dépôt est
+ensuite relevé et conservé en pièce jointe.
 
 |Suivi
 |Échéances de l'exercice ; dépôts préparés, transmis, accusés (accusé
@@ -66,10 +71,13 @@ document intangible une fois transmis (déclencheur PostgreSQL).
 |Interface abstraite `Teledec::Transport` ; *adaptateur réel*
 `Teledec::HttpTransport` (API partenaire de TELEDEC) : jeton OAuth2
 `client_credentials` en cache, liasse par l'API Balance (URL de la liasse
-rendue à l'utilisateur), TVA CA3 et CA12, DAS2 (seule : formulaire
-principal), relevés 2571 et 2572 par l'API marque blanche, chacun au
-millésime de sa campagne ; validation facultative de chaque document par
-les schémas JSON officiels de TELEDEC avant l'envoi ; entreprise et compte
+rendue à l'utilisateur), TVA CA3 et CA12 (sans millésime : TELEDEC le
+déduit de la fin de période), DAS2 (seule : formulaire principal), relevés
+2571 et 2572 par l'API marque blanche, au millésime de leur campagne ;
+amorce du dépôt au greffe (`nouvelle-declaration`) et relevé de son PDF
+signé ; validation locale facultative de chaque document par les schémas
+JSON officiels de TELEDEC avant l'envoi (TELEDEC n'offre pas de validation
+sans dépôt, « dry-run ») ; entreprise et compte
 créés chez TELEDEC, à leur régime, avant le premier dépôt ; suivi (`declaration-status`, comptes-rendus), rappels
 de TELEDEC reçus sur `/hooks/TELEDEC/callback` (mot de passe `Basic` du
 partenaire). TELEDEC
@@ -134,8 +142,8 @@ passe des rappels.
 
 === Réglages de l'instance (opérateur)
 
-Réponses de TELEDEC du 29 septembre 2026 (DECISIONS D-TDC3-001 à
-D-TDC3-008) :
+Réponses de TELEDEC du 29 septembre et du 1er octobre 2026 (DECISIONS
+D-TDC3-001 à D-TDC3-008, D-TDC9-001 à D-TDC9-007) :
 
 [cols="2,5",options="header"]
 |===
@@ -169,6 +177,11 @@ fixe l'identifiant attendu.
 |Valeur de `#SOURCE` de la liasse (API Balance) ; défaut `API`, valeur
 donnée par TELEDEC.
 
+|`PARTIDUO_TELEDEC_LIASSE_CALLBACK_KEY`
+|Facultatif. Clé de la ligne qui porte l'adresse des rappels dans la
+liasse ; défaut `URL` (`#URL <adresse>`, guide d'intégration de l'API
+Liasse). À régler seulement si TELEDEC en désigne une autre.
+
 |`PARTIDUO_TELEDEC_SCHEMAS_DIR`
 |Facultatif. Dossier des schémas JSON officiels de TELEDEC
 (`index.json`, `envelope.json`, `<formulaire>-<millésime>.json`, tels que
@@ -183,25 +196,55 @@ du formulaire (la CA3 `3310CA3` n'est pas publiée), l'enveloppe seule est
 validée et un avertissement est journalisé ; dossier introuvable :
 avertissement, aucune validation. Sans réglage, rien ne change. Ces schémas
 sont des documents de TELEDEC : ils ne sont pas versionnés dans ce dépôt.
+C'est la seule validation sans dépôt : TELEDEC n'a pas de mode « dry-run »
+(prévu dans sa feuille de route, réponses du 1er octobre 2026).
 |===
 
+Droits du jeton OAuth2 (`stage/…` ou `prod/…`) : `liasse`, `marque-blanche`,
+`declaration-status`, `liste-cr`, `creation-entreprise` et
+`nouvelle-declaration` (greffe, accordé au partenaire le 1er octobre 2026).
+Si le service des jetons refuse ce dernier (`invalid_scope`), le jeton est
+pris sans lui : seul le dépôt au greffe est alors refusé, avec un message
+qui nomme le droit manquant.
+
 Millésimes (année de campagne, `Teledec::Remote::Millesime`, DECISIONS
-D-TDC6-001) : liasse, année de clôture plus un pour une clôture au
-31 décembre (sinon l'année de clôture) ; DAS2, année des sommes plus un
-(la DAS2 de 2025 est au millésime 2026, le seul publié) ; TVA, année de la
-période, palier `202502` pour une période close à partir du 1er juin 2025
-(`202602` en 2026 ; le millésime 2026 de base se nomme `202601`) ; relevés
+D-TDC6-001, D-TDC9-003, règle confirmée par TELEDEC le 1er octobre 2026) :
+liasse et DAS2, année du lendemain de la clôture (clôture au 31/12/2025 →
+2026 ; au 30/06/2025 → 2025 ; DAS2 des sommes de 2025 → 2026) ; relevés
 2571 et 2572, année de l'échéance (la précédente avant mars). Le champ
 `period.millesime` et la ligne `#MILLESIME` de la liasse portent l'année
-de campagne ; le palier choisit le schéma et les codes.
+de campagne. TVA (CA3, CA12 et annexes) : *aucun millésime transmis*,
+TELEDEC le déduit de `period.end` ; le palier reste calculé dans
+l'extension pour choisir le schéma de validation et la table des codes
+(année de la période, `202502` pour une période close à partir du 1er juin
+2025, `202602` en 2026, le millésime 2026 de base se nommant `202601`).
 
-L'adresse des rappels est donnée à TELEDEC dans le champ `url` de chaque
-déclaration en marque blanche ; la liasse (API Balance) n'a pas de champ
-d'adresse : ses rappels vont à l'adresse configurée chez TELEDEC pour le
-partenaire. Le dépôt au greffe ne passe pas par l'API (parcours de
-redirection en marque blanche vers le formulaire greffe de TELEDEC, dont
-les routes ne sont pas encore documentées) : il se fait sur le site de
-TELEDEC.
+Régime fiscal de l'entreprise (`fullRegimeFiscal` de
+`creation-entreprise`) : *facultatif* chez TELEDEC (omis, l'entreprise
+prend l'IS réel simplifié, réajusté au premier envoi de liasse). L'extension
+le donne quand même à la création, pour que l'entreprise porte d'emblée son
+vrai régime (`BNCDC` pour un libéral : sa 2035 passe ainsi sur le stage) ;
+jamais dans une déclaration en marque blanche (D-TDC9-005).
+
+Rappels : TELEDEC rappelle à l'envoi, à l'acceptation et au rejet par la
+DGFiP, jamais au simple dépôt (confirmé le 1er octobre 2026). L'adresse des
+rappels est donnée dans chaque dépôt : `auth.url` en marque blanche et pour
+le greffe, ligne `#URL` dans la liasse (API Balance, qui porte aussi
+`#REFERENCE` et `#CREATION-AUTO OUI` ; TELEDEC y écrit en outre au compte de
+l'entreprise). L'entreprise et son compte restent créés par
+`creation-entreprise` avant la première liasse : c'est le seul moyen
+vérifié sur le stage de les créer à leur régime (D-TDC9-004).
+
+Dépôt au greffe (D-TDC9-001, D-TDC9-002) : « Transmettre » amorce le dépôt
+(`POST /service/nouvelle-declaration`, `formulaire: "greffe"`, corps sur le
+modèle de la marque blanche — hypothèse consignée, question posée à
+TELEDEC) ; TELEDEC rend une adresse de connexion automatique que le bouton
+« Finaliser le dépôt chez TELEDEC » ouvre dans un nouvel onglet. TELEDEC y
+reprend la liasse de l'exercice (un avertissement le rappelle tant qu'elle
+n'est pas transmise). Dès que le dépôt est finalisé (suivi ou rappel), son
+PDF signé est relevé par `GET /service/declarationPdf/{token}/…` (jeton tiré
+de `lienPdf`, sur la route de l'environnement, jamais à l'adresse reçue) et
+conservé en pièce jointe du dépôt (« PDF du dépôt au greffe »).
 
 == Commandes
 
@@ -247,6 +290,7 @@ haché de son mot de passe : la suite les vérifie sans les afficher.
 |DAS2 |DAS2 de 2025 *seule* (formulaire principal), au millésime 2026 (vérifié avant l'appel) ; deux bénéficiaires — une société (`AF_3036_1`, `AF_3039_1`) payée de deux natures (sous-tableau `repetitionDAS2MontantSommesVersees`), une personne physique (`AE_3036_1`, `AE_3036_2`, `AI`) — ; lien, identifiant de suivi, état lu. Échoue si les contrôles de TELEDEC signalent `CompleteWithErrors`, avec les libellés d'erreur rendus par TELEDEC.
 |Relevé 2571 |Quatrième acompte d'IS de l'exercice 2026 (régime de l'entreprise de test remis à `ISRS` avant le dépôt) ; lien, identifiant, état ; même contrôle `CompleteWithErrors`.
 |2035 sans balance |2035 construite par l'extension dans la base de test avec le module `liberal` seul (régime BNC, exercice 2025, aucune ligne de balance), déposée pour une *seconde* entreprise fictive (SIREN `999888662`, compte distinct, créé par l'adaptateur au régime `BNC` avant la liasse). Avant l'appel, le corps est vérifié : aucune section de balance, section JSON dans la forme documentée (plusieurs lignes, blocs `zones_formulaires` et `informations_supplementaires`, D-TDC7-001). URL rendue, état lu. Un refus de TELEDEC, au dépôt comme au suivi, fait échouer l'exemple avec son message et la route qui a refusé (`/service/creation-entreprise` ou `/service/liasse`).
+|Greffe |Amorce `nouvelle-declaration` pour l'entreprise de test (SAS) : corps vérifié avant l'appel, adresse de redirection rendue (vérifiée sans être affichée), dépôt jamais finalisé. En attente si le jeton du stage ne porte pas encore le droit `nouvelle-declaration`.
 |Rappels |Serveur de réception local ; CA3 déposée avec l'adresse publique en `url` ; la suite écrit le lien de la déclaration sur le stage dans un fichier temporaire (droits 0600, supprimé à la fin de l'exemple), en affiche le chemin et le début tronqué, et demande de l'ouvrir et de cliquer sur « Envoyer » (rien ne part à la DGFiP) ; attend un rappel authentifié en `Basic`, accepté (200) par la réception réelle de l'extension (`Teledec::Ui::CallbackHandler`, `Callbacks.authenticate`, `Callbacks.receive`) ; le même corps avec un mauvais mot de passe, ou sans en-tête, est refusé (401).
 |===
 
@@ -281,7 +325,8 @@ TELEDEC_CALLBACK_URL=https://… DATABASE_URL='postgres:///partiduo_test_<agent>
 ----
 
 TELEDEC rappelle à l'envoi, à l'acceptation et au rejet par la DGFiP
-(réponses du 29 septembre 2026), pas au dépôt ; en marque blanche, l'envoi
+(confirmé le 1er octobre 2026) : *rien au simple dépôt, c'est normal* ; en
+marque blanche, l'envoi
 se fait depuis l'interface de TELEDEC et l'API n'a pas de route d'envoi.
 Pendant l'exemple des rappels, la sortie affiche donc (le lien complet,
 qui porte le jeton, n'est que dans le fichier) :
@@ -293,12 +338,41 @@ qui porte le jeton, n'est que dans le fichier) :
   │ qui commence par https://stage.teledec.fr/service/declaration/…
   │ puis cliquez sur « Envoyer ». Stage : rien ne part à la DGFiP (paiement éventuel fictif :
   │ n'importe quelle carte, code 3D Secure 1234).
+  │ Rien n'arrive au simple dépôt, c'est normal : TELEDEC ne rappelle qu'à l'envoi, à
+  │ l'acceptation et au rejet (confirmé le 1er octobre 2026).
   └ En attente du rappel de TELEDEC : 300 s au plus (TELEDEC_CALLBACK_WAIT), port 8787…
 ----
 
 Ouvrir le lien du fichier (par exemple `open "$(cat <fichier>)"` sous macOS), cliquer sur « Envoyer » dans le délai (`TELEDEC_CALLBACK_WAIT`,
 5 minutes par défaut) ; sans rappel, l'exemple échoue en le disant. Les
 rappels d'autres déclarations reçus entre-temps sont signalés et ignorés.
+
+=== Exploration du stage
+
+`spec/integration/exploration_spec.cr` essaie sur le stage des variantes
+argumentées et dresse le tableau « variante → acceptée / refusée (message
+de TELEDEC expurgé) » : *DAS2 seule* (dix variantes : régime de
+l'entreprise à sa création, millésime, régime dans la payload, période
+réduite, CA3 déposée avant ou jointe, bloc minimal), *greffe* (amorce
+`nouvelle-declaration`, du corps minimal au corps complet, jamais
+finalisée) et *liasse* (`#CREATION-AUTO OUI` sans `creation-entreprise`,
+avec un témoin). Rien ne part à la DGFiP (lien sans envoi, liasse sans
+bouton « Envoyer », greffe amorcé seulement). Chaque variante a sa propre
+entreprise fictive (SIREN à clé valide `998<série><n°>` ; série
+`TELEDEC_EXPLORATION_SERIE`, sinon tirée de l'heure). Activée seulement avec
+les identifiants du stage *et* `TELEDEC_EXPLORATION=1` (domaine du
+partenaire requis) :
+
+[source,sh]
+----
+TELEDEC_EXPLORATION=1 DATABASE_URL='postgres:///partiduo_test_<agent>?host=/tmp' \
+  crystal spec spec/integration/exploration_spec.cr
+----
+
+Le tableau (AsciiDoc) est affiché en fin d'exécution et écrit dans un
+fichier lisible du seul utilisateur (droits 0600 ;
+`TELEDEC_EXPLORATION_FILE`, sinon dossier temporaire), dont le chemin
+s'affiche : à transmettre tel quel.
 
 == Licence
 

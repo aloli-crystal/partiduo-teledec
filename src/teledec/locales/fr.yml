@@ -66,6 +66,7 @@ fr:
     events:
       manual: "Déposée hors de Partiduo"
       no_reason: "Motif non communiqué"
+      document: "PDF du dépôt au greffe conservé : %{filename}"
     errors:
       regime: "Les télédéclarations TELEDEC concernent les dossiers français."
       accounting_required: "Cette déclaration nécessite le module Comptabilité : sans lui, seule la 2035 préparée par le module Profession libérale se télétransmet."
@@ -90,6 +91,8 @@ fr:
         not_applicable: "Les relevés d'IS ne concernent que les entreprises soumises à l'impôt sur les sociétés."
       greffe:
         disabled: "Le dépôt des comptes au greffe n'est pas activé dans les paramètres."
+        legal_form: "La forme juridique « %{form} » ne dépose pas ses comptes au greffe : seules les sociétés commerciales (SARL, EURL, SAS, SASU, SA, SNC, SCS, SELARL…) y sont admises ; une SCI, une EI ou une association n'y sont pas éligibles."
+        legal_form_missing: "Indiquez la forme juridique de la société (paramètres de la société) : le dépôt au greffe n'est proposé qu'aux sociétés commerciales."
       vat_return:
         unknown: "Déclaration de TVA inconnue."
         form: "Cette déclaration de TVA n'est pas du formulaire attendu."
@@ -116,7 +119,10 @@ fr:
         das2_nature: "Nature de rémunération « %{nature} » sans lettre de la DAS2 : corrigez les comptes de la DAS2 et préparez de nouveau."
         user_domain: "Domaine du partenaire non réglé sur cette instance (PARTIDUO_TELEDEC_USER_DOMAIN) : le compte de l'entreprise chez TELEDEC ne peut être formé. Demandez à l'opérateur de le régler."
         password: "Mot de passe du compte TELEDEC de l'entreprise absent ou illisible : réessayez."
-        greffe: "Le dépôt au greffe ne passe pas par l'API de TELEDEC (parcours de redirection non encore branché) : déposez-le sur le site de TELEDEC."
+        greffe_legal_form: "Cette forme juridique ne dépose pas ses comptes au greffe : dépôt refusé."
+        scope: "Le jeton de TELEDEC ne porte pas le droit « %{scope} » : demandez à TELEDEC de l'activer pour le partenaire, puis réessayez."
+        no_link: "TELEDEC n'a pas rendu l'adresse où finaliser le dépôt au greffe ; réessayez plus tard."
+        document: "Le PDF du dépôt au greffe n'a pu être relevé chez TELEDEC : actualisez le statut plus tard. %{reason}"
         zone_unknown: "Cases inconnues des formulaires de TELEDEC, qui les ignorerait : %{zones}."
         schema: "Document refusé avant l'envoi : il ne respecte pas le schéma JSON %{schema} de TELEDEC — %{path} : %{problem}%{more}. Préparez de nouveau la déclaration, ou signalez l'écart à l'opérateur."
       credentials:
@@ -154,6 +160,7 @@ fr:
       balance_empty: "La balance de l'exercice est vide."
       balance_unbalanced: "La balance n'est pas équilibrée (écart de %{difference})."
       fiscal_year_open: "L'exercice n'est pas clôturé : la balance peut encore changer."
+      greffe_liasse: "La liasse de l'exercice n'est pas encore transmise à TELEDEC : le dépôt au greffe la reprend, transmettez-la d'abord."
       corporate_tax_zero: "Montant d'impôt nul."
       liberal_year_open: "L'exercice %{year} n'est pas clôturé : clôturez-le (écran 2035 ou livre-journal) avant de transmettre la 2035."
       liberal_not_ready:

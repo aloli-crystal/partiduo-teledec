@@ -38,6 +38,8 @@ module Teledec
     field :last_error, :string, max_size: 255, blank: true, default: ""
     field :manual, :bool, default: false
     field :receipt_attachment_id, :big_int, blank: true, null: true
+    # PDF signé du dépôt au greffe, pièce jointe du socle (D-TDC9-002).
+    field :document_attachment_id, :big_int, blank: true, null: true
     field :prepared_at, :date_time
     field :prepared_by_id, :big_int, blank: true, null: true
     field :transmitted_at, :date_time, blank: true, null: true

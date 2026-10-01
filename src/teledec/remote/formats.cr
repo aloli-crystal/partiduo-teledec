@@ -24,7 +24,14 @@ module Teledec
     #   (`POST /service/declaration-marque-blanche`), JSON `auth`,
     #   `identity`, `period` et un bloc par formulaire en clés/valeurs ; la
     #   DAS2, formulaire principal (annexe G de la page marque blanche),
-    #   part seule, au millésime de sa campagne (D-TDC6-001).
+    #   part seule, au millésime de sa campagne (D-TDC6-001) ; les
+    #   déclarations de TVA ne portent pas de millésime (TELEDEC le déduit
+    #   de `period.end`, D-TDC9-003).
+    # * Greffe : amorce par `POST /service/nouvelle-declaration`
+    #   (`formulaire: "greffe"`, corps sur le modèle de la marque blanche,
+    #   D-TDC9-001) ; TELEDEC rend l'adresse de redirection où l'utilisateur
+    #   finalise le dépôt ; le PDF signé se relève ensuite par le jeton de
+    #   `lienPdf` (`pdf_token`, D-TDC9-002).
     #
     # Millésimes : `Millesime` ; clés et types conformes aux schémas JSON
     # de TELEDEC (`Schemas`, D-TDC6-002 à 004).
@@ -39,6 +46,11 @@ module Teledec
         "is_2571"  => "2571",
         "is_2572"  => "2572",
       }
+
+      # Formulaire de suivi de chaque sorte (paramètre `formulaire` du
+      # suivi, `formulaire` des rappels) : ceux de la marque blanche, plus
+      # le greffe, qui n'a pas de bloc de marque blanche.
+      TRACKED_FORMS = FORM_KEYS.merge({"greffe" => "greffe"})
 
       # Cases de la CA3 de Partiduo (lignes du 3310-CA3) → codes TELEDEC du
       # formulaire `3310CA3`, par premier millésime d'application
@@ -151,9 +163,12 @@ module Teledec
       }
 
       # Régime d'imposition du dossier → régime fiscal complet de TELEDEC
-      # (`fullRegimeFiscal` de `creation-entreprise`, champ facultatif de
-      # cette route, défaut `ISRS` chez TELEDEC) : l'entreprise créée avant
-      # un dépôt porte son vrai régime (D-TDC5-002, D-TDC6-005). Jamais dans
+      # (`fullRegimeFiscal` de `creation-entreprise`). Champ *facultatif*
+      # (réponses du 1er octobre 2026) : omis, l'entreprise prend l'IS réel
+      # simplifié (`ISRS`), réajusté au premier envoi de liasse par la
+      # payload Balance. Gardé à la création : l'entreprise créée avant un
+      # dépôt porte d'emblée son vrai régime, et pas un régime faux jusqu'à
+      # sa première liasse (D-TDC5-002, D-TDC6-005, D-TDC9-005). Jamais dans
       # l'identité d'une déclaration en marque blanche : réservé à l'option
       # « EDI Requête » ; TELEDEC y déduit le régime des formulaires.
       # Valeurs de la liste de référence de TELEDEC (« Liste régimes
@@ -250,11 +265,20 @@ module Teledec
       # --- Liasse (API Balance) --------------------------------------------------
 
       # `account` : adresse du compte de l'entreprise chez TELEDEC
-      # (`Account.email`), avec le haché bcrypt de son mot de passe. La
-      # liasse n'a pas de champ d'adresse de rappel : ses rappels vont à
-      # l'adresse configurée chez TELEDEC pour le partenaire (D-TDC3-006).
+      # (`Account.email`), avec le haché bcrypt de son mot de passe.
+      # Identification alignée sur le guide d'intégration de l'API Liasse
+      # (2 mars 2026) : `#SOURCE`, `#EMAIL`, `#NOM`, `#SIRET`, catégorie et
+      # régime (omis pour une 2035 ou une 2072 : la spécification de l'API
+      # Balance, v1.2, ne rend obligatoire que `#SOURCE`, et le stage
+      # accepte la 2035 ainsi), dates de l'exercice, `#CREATION-AUTO OUI`,
+      # `#MILLESIME`, `#REFERENCE` (renvoyée dans le rappel). Adresse des
+      # rappels : `#URL` (guide d'intégration de l'API Liasse,
+      # « URL de callback pour les retours DGFiP » ; TELEDEC appelle « le
+      # webhook renseigné dans la payload », réponses du 1er octobre 2026,
+      # D-TDC9-004), réglable par `PARTIDUO_TELEDEC_LIASSE_CALLBACK_KEY`
+      # (`callback_key`) si TELEDEC en désigne une autre.
       def self.liasse(payload : Payload, submission : Submission, credentials : Credentials, source : String,
-                      send_button : Bool, account : String) : String
+                      send_button : Bool, account : String, callback_key : String = LIASSE_CALLBACK_KEY) : String
         identity = payload.identity
         category = CATEGORIES[payload.forms]?
         lines = [] of {String, String?}
@@ -269,6 +293,11 @@ module Teledec
         lines << {"EXERCICE-DATE-DEBUT", compact_day(payload.period_from)}
         lines << {"EXERCICE-DATE-FIN", compact_day(payload.period_to)}
         lines << {"MILLESIME", millesime(payload).to_s}
+        # Création automatique de l'entreprise (guide d'intégration de l'API
+        # Liasse, 2 mars 2026) ; l'adaptateur la crée aussi avant, par
+        # `creation-entreprise`, seul moyen vérifié sur le stage de lui
+        # donner son compte et son régime (D-TDC5-002, D-TDC9-004).
+        lines << {"CREATION-AUTO", "OUI"}
         lines << {"FORME-JURIDIQUE", legal_form(identity.legal_form)}
         lines << {"ADRESSE-NUMERO-RUE", identity.street}
         lines << {"ADRESSE-CODE-POSTAL", identity.postcode}
@@ -276,6 +305,7 @@ module Teledec
         lines << {"ADRESSE-PAYS", identity.country_code}
         lines << {"AFFICHAGE-BOUTON-ENVOYER", send_button ? "OUI" : "NON"}
         lines << {"REFERENCE", submission.reference}
+        lines << {callback_key, submission.callback_url}
         String.build do |io|
           lines.each do |(name, value)|
             text = clean(value.to_s)
@@ -341,6 +371,19 @@ module Teledec
         tables[tables.keys.select(&.<=(target)).max? || tables.keys.min]
       end
 
+      # Clé de l'adresse des rappels dans l'identification de la liasse
+      # (`#URL`, guide d'intégration de l'API Liasse, D-TDC9-004).
+      LIASSE_CALLBACK_KEY = "URL"
+      # Réglage d'instance qui la remplace, si TELEDEC en désignait une autre
+      # (la clé `URL` vient du guide, pas encore observée sur le stage).
+      LIASSE_CALLBACK_VARIABLE = "PARTIDUO_TELEDEC_LIASSE_CALLBACK_KEY"
+
+      # Clé réglée (lettres capitales, chiffres et tirets), sinon `URL`.
+      def self.liasse_callback_key(value : String? = ENV[LIASSE_CALLBACK_VARIABLE]?) : String
+        clean = value.to_s.strip.lchop('#').upcase
+        clean.matches?(/\A[A-Z0-9][A-Z0-9-]*\z/) ? clean : LIASSE_CALLBACK_KEY
+      end
+
       # --- Marque blanche ---------------------------------------------------------
 
       # `account` : adresse du compte de l'entreprise chez TELEDEC
@@ -393,14 +436,119 @@ module Teledec
                 submission.due_on.try { |day| json.field "echeance", day }
                 json.field "montant", amount
                 json.field "noPayment", amount <= 0
-                # Année de campagne (D-TDC6-001) ; TELEDEC déduit le palier
-                # de TVA des dates de la période.
-                json.field "millesime", millesime(payload, submission.due_on)
+                # Année de campagne (D-TDC6-001), sauf pour la TVA : TELEDEC
+                # ignore le millésime d'une déclaration de TVA et déduit le
+                # palier de son schéma de `period.end` (réponses du
+                # 1er octobre 2026, D-TDC9-003).
+                unless payload.kind.starts_with?("vat_")
+                  json.field "millesime", millesime(payload, submission.due_on)
+                end
               end
             end
             json.field form, block
           end
         end
+      end
+
+      # --- Greffe -----------------------------------------------------------------
+
+      # Corps de l'amorce du dépôt au greffe
+      # (`POST /service/nouvelle-declaration`). Seul `formulaire: "greffe"`
+      # est documenté (réponses du 1er octobre 2026) ; le reste suit la
+      # marque blanche, *hypothèse* consignée (D-TDC9-001, à confirmer par
+      # la suite d'exploration du stage ou par TELEDEC) : `auth` (compte de
+      # l'entreprise, horodatage en heure française, adresse des rappels),
+      # `identity` (SIRET, raison sociale,
+      # clôture, adresse, forme juridique, email de contact), `period`
+      # (exercice et référence du partenaire). Ni balance ni cases : TELEDEC
+      # reprend la liasse de l'exercice ; la confidentialité des comptes se
+      # choisit sur son écran de dépôt.
+      def self.greffe(payload : Payload, submission : Submission, credentials : Credentials, now : Time,
+                      account : String) : String
+        identity = payload.identity
+        year_end = Time.parse(payload.period_to, "%F", Time::Location::UTC)
+        JSON.build do |json|
+          json.object do
+            json.field "formulaire", "greffe"
+            json.field "auth" do
+              json.object do
+                json.field "email", account
+                json.field "timestamp", paris(now).to_s("%Y-%m-%dT%H:%M:%S")
+                submission.callback_url.try { |url| json.field "url", url }
+                json.field "retournerLien", true
+              end
+            end
+            json.field "identity" do
+              json.object do
+                json.field "siret", siret(credentials, identity) || identity.siren
+                json.field "name", identity.company_name
+                json.field "yearEndMonth", year_end.month
+                json.field "yearEndDay", year_end.day
+                present(json, "addressStreet", identity.street)
+                present(json, "addressPostalCode", identity.postcode)
+                present(json, "addressCity", identity.city)
+                present(json, "addressCountry", identity.country_code)
+                present(json, "legalForm", legal_form(identity.legal_form))
+                present(json, "email", credentials.email)
+              end
+            end
+            json.field "period" do
+              json.object do
+                json.field "begin", payload.period_from
+                json.field "end", payload.period_to
+                json.field "reference", submission.reference
+              end
+            end
+          end
+        end
+      end
+
+      # Champs où TELEDEC peut rendre l'adresse de redirection d'une
+      # amorce (forme de la réponse non documentée, D-TDC9-001) : la page de
+      # la liasse (`url`), le lien de la marque blanche (`lien`), puis des
+      # noms plausibles ; à défaut, la première valeur `http…` de l'objet.
+      REDIRECT_FIELDS = %w[url lien redirection redirect urlRedirection lienRedirection autologin]
+
+      # Adresse rendue par TELEDEC : texte brut (première ligne `http…`) ou
+      # JSON (`REDIRECT_FIELDS`) ; vide s'il n'y en a pas.
+      def self.redirect_url(body : String) : String
+        text = body.strip
+        unless text.starts_with?('{')
+          return text.starts_with?("http") ? text.lines.first.strip : ""
+        end
+        answer = JSON.parse(text).as_h? || return ""
+        REDIRECT_FIELDS.each do |name|
+          answer[name]?.try(&.as_s?).try { |value| return value.strip if value.starts_with?("http") }
+        end
+        answer.values.compact_map(&.as_s?).find(&.starts_with?("http")).try(&.strip) || ""
+      rescue JSON::ParseException
+        ""
+      end
+
+      # Jeton du PDF d'un dépôt, tiré de `lienPdf`
+      # (`…/service/declarationPdf/{token}/teledec-liasse-fiscale.pdf`, ou le
+      # jeton seul) ; `nil` s'il n'y en a pas. Le PDF se relève toujours sur
+      # la route de l'environnement du dossier, jamais à l'adresse reçue.
+      def self.pdf_token(link : String) : String?
+        text = link.strip
+        return if text.empty?
+        token = text.match(%r{/declarationPdf/([^/?#\s]+)}).try(&.[1]) || text
+        token if token.matches?(PDF_TOKEN)
+      end
+
+      PDF_TOKEN = /\A[A-Za-z0-9._~%+=-]{8,2048}\z/
+
+      # Route du PDF d'un dépôt (réponses du 1er octobre 2026).
+      def self.pdf_path(token : String) : String
+        "/service/declarationPdf/#{URI.encode_path_segment(token)}/teledec-liasse-fiscale.pdf"
+      end
+
+      # États bruts d'un dépôt finalisé chez TELEDEC (envoyé, accepté ou
+      # rejeté) : son PDF est servi (D-TDC9-002).
+      FINALIZED = %w[sent ok accepted erreur rejected]
+
+      def self.finalized?(status : String) : Bool
+        FINALIZED.includes?(normalize(status))
       end
 
       # Régime d'imposition du dossier : celui noté dans le document
@@ -566,8 +714,10 @@ module Teledec
       #
       # `declaration_type` : type du rappel chez TELEDEC (`TVA`, `Liasse`,
       # `Paiement`…) ; un rappel de paiement ne dit rien de la déclaration.
+      #
+      # `pdf_link` : `lienPdf` du retour (PDF du dépôt au greffe, D-TDC9-002).
       record Report, declaration_id : String, reference : String, status : String, reason : String,
-        pdf : Bytes?, at : Time?, form : String, declaration_type : String = "" do
+        pdf : Bytes?, at : Time?, form : String, declaration_type : String = "", pdf_link : String = "" do
         def state : String
           Formats.state(status)
         end
@@ -584,16 +734,19 @@ module Teledec
         end
       end
 
-      # Type de rappel (`declarationType`) de chaque sorte de dépôt
+      # Types de rappel (`declarationType`) de chaque sorte de dépôt
       # (réponses de TELEDEC du 29 septembre 2026, D-TDC3-005) : la DAS2 est
       # une déclaration `part`, les relevés 2571 et 2572 des `paiement`
-      # (non distingués entre eux).
-      DECLARATION_TYPES = {"vat_ca3" => "tva", "vat_ca12" => "tva", "liasse" => "liasse", "das2" => "part",
-                           "is_2571" => "paiement", "is_2572" => "paiement", "greffe" => "greffe"}
+      # (non distingués entre eux) ; le greffe, `Greffe`, ou `GreffeSeul`
+      # pour un dépôt sans liasse (types de déclaration, réponses du
+      # 1er octobre 2026).
+      DECLARATION_TYPES = {"vat_ca3" => %w[tva], "vat_ca12" => %w[tva], "liasse" => %w[liasse], "das2" => %w[part],
+                           "is_2571" => %w[paiement], "is_2572" => %w[paiement], "greffe" => %w[greffe greffeseul]}
 
-      # Sorte de dépôt d'un formulaire de suivi (`liasse`, `3310CA3`…).
+      # Sorte de dépôt d'un formulaire de suivi (`liasse`, `3310CA3`,
+      # `greffe`…).
       def self.kind_of_form(form : String) : String?
-        FORM_KEYS.key_for?(form)
+        TRACKED_FORMS.key_for?(form)
       end
 
       # Le compte-rendu `report` concerne-t-il la déclaration d'un dépôt de
@@ -602,8 +755,8 @@ module Teledec
       def self.concerns?(report : Report, kind : String?) : Bool
         type = normalize(report.declaration_type)
         expected = kind.try { |value| DECLARATION_TYPES[value]? }
-        return type == expected if expected && !type.empty?
-        !report.payment? || expected == "paiement"
+        return expected.includes?(type) if expected && !type.empty?
+        !report.payment? || expected == %w[paiement]
       end
 
       # Identité de l'entreprise pour `POST /service/creation-entreprise`
@@ -639,7 +792,8 @@ module Teledec
           nil
         end
         Report.new(text.call("declarationId"), text.call("reference"), status, reason(hash, text.call("statusLibelle")),
-          pdf, parse_time(text.call("dateHeureDGFiP")), text.call("formulaire"), text.call("declarationType"))
+          pdf, parse_time(text.call("dateHeureDGFiP")), text.call("formulaire"), text.call("declarationType"),
+          text.call("lienPdf"))
       end
 
       # Motif lisible d'un rejet : erreurs de la DGFiP

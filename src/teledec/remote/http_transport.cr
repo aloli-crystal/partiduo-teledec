@@ -31,24 +31,41 @@ module Teledec
   #   régime fiscal du dossier (D-TDC5-002) ; la liasse porte aussi
   #   `#EMAIL` et `#MOT-DE-PASSE`.
   #
-  # * Validation facultative (`PARTIDUO_TELEDEC_SCHEMAS_DIR` : dossier des
-  #   schémas JSON officiels de TELEDEC, `Remote::Schemas`) : chaque
-  #   document est validé avant l'envoi contre le schéma de son formulaire
-  #   au bon millésime (l'enveloppe seule si le formulaire n'a pas de
-  #   schéma, un avertissement journalisé alors) ; un écart refuse l'envoi
-  #   (`teledec.errors.transport.schema`, chemin JSON cité). Sans réglage,
-  #   rien ne change (D-TDC6-003).
+  # * Validation locale facultative (`PARTIDUO_TELEDEC_SCHEMAS_DIR` :
+  #   dossier des schémas JSON officiels de TELEDEC, `Remote::Schemas`) :
+  #   chaque document est validé *dans l'instance*, avant l'envoi, contre le
+  #   schéma de son formulaire au bon millésime (l'enveloppe seule si le
+  #   formulaire n'a pas de schéma, un avertissement journalisé alors) ; un
+  #   écart refuse l'envoi (`teledec.errors.transport.schema`, chemin JSON
+  #   cité). Sans réglage, rien ne change (D-TDC6-003). TELEDEC n'offre
+  #   aucune validation sans dépôt (pas de « dry-run », réponses du
+  #   1er octobre 2026, D-TDC9-006) : seule cette validation locale existe.
+  #
+  # * Greffe (réponses du 1er octobre 2026, D-TDC9-001, D-TDC9-002) :
+  #   amorce par `POST /service/nouvelle-declaration` (droit
+  #   `nouvelle-declaration` du jeton, `formulaire: "greffe"`) pour une
+  #   forme juridique qui dépose ses comptes (`Config.greffe_eligible?`) ;
+  #   TELEDEC rend l'adresse de redirection (connexion automatique) où
+  #   l'utilisateur finalise le dépôt. Suivi par `declaration-status`
+  #   (`formulaire=greffe`) ; dès que le dépôt est finalisé, son PDF signé
+  #   se relève par `GET /service/declarationPdf/{token}/…` (`document`),
+  #   le jeton venant de `lienPdf` des retours.
   #
   # Les identifiants et le jeton ne sont jamais journalisés ni rendus ;
   # les erreurs sont des clés i18n (`teledec.errors.transport.*`) avec le
-  # message de TELEDEC pour motif. Le greffe ne se dépose pas par l'API
-  # (parcours de redirection en marque blanche dont les routes ne sont pas
-  # documentées, D-TDC3-008) : `teledec.errors.transport.greffe`.
+  # message de TELEDEC pour motif.
   class HttpTransport < Transport
     AUTH_URL       = "https://auth.partners.teledec.fr/oauth2/token"
     API_URLS       = {"sandbox" => "https://stage.teledec.fr", "production" => "https://www.teledec.fr"}
     SCOPE_PREFIXES = {"sandbox" => "stage", "production" => "prod"}
-    SCOPES         = %w[liasse marque-blanche declaration-status liste-cr creation-entreprise]
+    SCOPES         = %w[liasse marque-blanche declaration-status liste-cr creation-entreprise nouvelle-declaration]
+    # Droits demandés seulement s'ils sont accordés : un client qui ne les
+    # a pas encore (refus `invalid_scope` du service des jetons) reçoit un
+    # jeton sans eux, et seul le dépôt qui les exige est refusé
+    # (`teledec.errors.transport.scope`).
+    OPTIONAL_SCOPES = %w[nouvelle-declaration]
+    # Droit de l'amorce du dépôt au greffe.
+    GREFFE_SCOPE = "nouvelle-declaration"
     # Marge avant l'expiration du jeton.
     TOKEN_MARGIN = 60.seconds
     # Source déclarée dans la liasse : `API`, valeur donnée par TELEDEC
@@ -56,7 +73,8 @@ module Teledec
     # `PARTIDUO_TELEDEC_SOURCE`.
     DEFAULT_SOURCE = "API"
 
-    record Token, value : String, expires_at : Time
+    # Jeton et droits qu'il porte (sans préfixe d'environnement).
+    record Token, value : String, expires_at : Time, scopes : Array(String) = SCOPES
 
     getter exchange : Remote::Exchange
     property source : String
@@ -74,14 +92,19 @@ module Teledec
     # Schémas JSON de TELEDEC (défaut : `PARTIDUO_TELEDEC_SCHEMAS_DIR`) ;
     # `nil` : aucune validation avant l'envoi.
     property schemas : Remote::Schemas?
+    # Clé de l'adresse des rappels dans la liasse (`#URL` par défaut,
+    # `PARTIDUO_TELEDEC_LIASSE_CALLBACK_KEY`, D-TDC9-004).
+    property liasse_callback_key : String
 
     @tokens = {} of String => Token
     @mutex = Mutex.new
 
     def initialize(@exchange : Remote::Exchange = Remote::Net.new, @name : String = "TELEDEC",
                    source : String? = nil, @send_button : Bool = true, @clock : Proc(Time) = -> { Time.utc },
-                   user_domain : String? = nil, user_format : String? = nil, schemas_dir : String? = nil)
+                   user_domain : String? = nil, user_format : String? = nil, schemas_dir : String? = nil,
+                   liasse_callback_key : String? = nil)
       @source = source || ENV["PARTIDUO_TELEDEC_SOURCE"]?.presence || DEFAULT_SOURCE
+      @liasse_callback_key = Remote::Formats.liasse_callback_key(liasse_callback_key || ENV[Remote::Formats::LIASSE_CALLBACK_VARIABLE]?)
       @user_domain = Remote::Account.domain(user_domain || ENV[Remote::Account::DOMAIN_VARIABLE]?)
       @user_format = Remote::Account.format(user_format || ENV[Remote::Account::FORMAT_VARIABLE]?)
       @schemas = Remote::Schemas.from(schemas_dir || ENV[Remote::Schemas::VARIABLE]?)
@@ -111,10 +134,10 @@ module Teledec
       rescue JSON::ParseException | JSON::SerializableError
         raise TransportError.new("teledec.errors.transport.invalid")
       end
-      raise TransportError.new("teledec.errors.transport.greffe") if payload.kind == "greffe"
       account = account_email(payload.identity.siren)
       require_password!(credentials)
       key = Remote::Formats.key(payload, submission.due_on)
+      return greffe(credentials, payload, submission, account, key) if payload.kind == "greffe"
       if payload.kind == "liasse"
         # TELEDEC rattache la liasse à l'entreprise par son SIRET. La liasse
         # ne crée pas le compte de l'entreprise : sur le stage, le suivi
@@ -124,9 +147,9 @@ module Teledec
         raise TransportError.new("teledec.errors.transport.siret") unless Remote::Formats.siret(credentials, payload.identity)
         validate_zones!(payload)
         created = ensure_company(credentials, payload, submission, account)
-        body = Remote::Formats.liasse(payload, submission, credentials, source, send_button?, account)
+        body = Remote::Formats.liasse(payload, submission, credentials, source, send_button?, account, liasse_callback_key)
         response = call(credentials, "POST", "/service/liasse", body, "text/plain; charset=utf-8")
-        return Submitted.new(key.to_s, link(response.body), "notcompleted", account_created: created)
+        return Submitted.new(key.to_s, Remote::Formats.redirect_url(response.body), "notcompleted", account_created: created)
       end
       body = Remote::Formats.white_label(payload, submission, credentials, @clock.call, account)
       validate_document!(payload, submission, body)
@@ -155,8 +178,11 @@ module Teledec
       raw = answer["status"]?.try { |value| value.as_s? || value.raw.to_s } || ""
       state = Remote::Formats.state(raw)
       normalized = Remote::Formats.normalize(raw)
-      return RemoteStatus.new("pending", remote_status: normalized) if state == "pending"
       listed = (answer["compteRendus"]?.try(&.as_a?) || [] of JSON::Any).map { |item| Remote::Formats.report(item) }
+      if state == "pending"
+        document = greffe_document(credentials, key, raw, answer, listed)
+        return RemoteStatus.new("pending", remote_status: normalized, document: document)
+      end
       listed = reports(credentials, key) if listed.empty?
       # Comptes-rendus de cette déclaration et de cet envoi : de son type
       # (un paiement ne vaut que pour un relevé d'IS), pas d'un envoi
@@ -172,7 +198,44 @@ module Teledec
           "application/pdf", pdf)
       end
       RemoteStatus.new(state, reason: reason, receipt: receipt, at: report.try(&.at),
-        remote_status: normalized, declaration_id: report.try(&.declaration_id) || "")
+        remote_status: normalized, declaration_id: report.try(&.declaration_id) || "",
+        document: greffe_document(credentials, key, raw, answer, reports))
+    end
+
+    # PDF d'un dépôt finalisé chez TELEDEC
+    # (`GET /service/declarationPdf/{token}/teledec-liasse-fiscale.pdf`,
+    # réponses du 1er octobre 2026) : `token` vient de `lienPdf` des retours
+    # (`Formats.pdf_token`) ; la route est toujours celle de l'environnement
+    # des identifiants. Un corps qui n'est pas un PDF, ou un refus :
+    # `teledec.errors.transport.document`.
+    def document(credentials : Credentials, token : String, name : String) : Receipt
+      response = begin
+        call(credentials, "GET", Remote::Formats.pdf_path(token), accept: "application/pdf")
+      rescue ex : TransportError
+        raise ex if ex.key == "teledec.errors.transport.unreachable"
+        raise TransportError.new("teledec.errors.transport.document", {"reason" => ex.params["reason"]? || ex.key})
+      end
+      unless response.body.starts_with?("%PDF")
+        raise TransportError.new("teledec.errors.transport.document", {"reason" => "PDF attendu"})
+      end
+      Receipt.new(name, "application/pdf", response.body.to_slice)
+    end
+
+    # Nom du PDF du dépôt au greffe conservé dans les pièces jointes.
+    def self.document_name(key : Remote::Formats::Key) : String
+      "depot-greffe-#{key.siren}-#{key.date_fin}.pdf"
+    end
+
+    # PDF signé d'un dépôt au greffe finalisé (état brut `raw` : envoyé,
+    # accepté ou rejeté), si un retour porte son lien (`lienPdf` de la
+    # réponse du suivi ou d'un compte-rendu) ; `nil` sinon, et pour toute
+    # autre sorte de dépôt.
+    private def greffe_document(credentials : Credentials, key : Remote::Formats::Key, raw : String,
+                                answer : Hash(String, JSON::Any), reports : Array(Remote::Formats::Report)) : Receipt?
+      return unless key.form == "greffe" && Remote::Formats.finalized?(raw)
+      links = [answer["lienPdf"]?.try(&.as_s?).to_s] + reports.map(&.pdf_link)
+      token = links.compact_map { |link| Remote::Formats.pdf_token(link) }.first? || return
+      document(credentials, token, HttpTransport.document_name(key))
     end
 
     # Comptes-rendus d'un dépôt (`/service/recuperation-liste-compterendus`) ;
@@ -190,6 +253,36 @@ module Teledec
       parsed = parse(response.body)
       list = parsed.as_a? || parsed["compteRendus"]?.try(&.as_a?) || [] of JSON::Any
       list.map { |item| Remote::Formats.report(item) }
+    end
+
+    # Amorce du dépôt au greffe (`POST /service/nouvelle-declaration`,
+    # D-TDC9-001) : forme juridique éligible, droit `nouvelle-declaration`
+    # dans le jeton, entreprise créée chez TELEDEC ; rend l'adresse de
+    # redirection (connexion automatique) que l'utilisateur ouvre pour
+    # finaliser le dépôt.
+    private def greffe(credentials : Credentials, payload : Payload, submission : Submission, account : String,
+                       key : Remote::Formats::Key) : Submitted
+      unless Config.greffe_eligible?(payload.identity.legal_form)
+        raise TransportError.new("teledec.errors.transport.greffe_legal_form")
+      end
+      require_scope!(credentials, GREFFE_SCOPE)
+      created = ensure_company(credentials, payload, submission, account)
+      body = Remote::Formats.greffe(payload, submission, credentials, @clock.call, account)
+      response = call(credentials, "POST", "/service/nouvelle-declaration", body, "application/json",
+        denied: {"teledec.errors.transport.scope", {"scope" => GREFFE_SCOPE}})
+      url = Remote::Formats.redirect_url(response.body)
+      if url.empty?
+        message = message_of(response.body)
+        raise TransportError.new("teledec.errors.transport.no_link") if message.blank? || message.strip.starts_with?('{')
+        raise TransportError.new("teledec.errors.transport.refused", {"reason" => short(message)})
+      end
+      Submitted.new(key.to_s, url, "notcompleted", account_created: created)
+    end
+
+    # Droit `scope` absent du jeton : `teledec.errors.transport.scope`.
+    private def require_scope!(credentials : Credentials, scope : String) : Nil
+      return if token(credentials).scopes.includes?(scope)
+      raise TransportError.new("teledec.errors.transport.scope", {"scope" => scope})
     end
 
     # Crée ou met à jour l'entreprise chez TELEDEC et la rattache au compte
@@ -271,12 +364,16 @@ module Teledec
 
     # --- HTTP -------------------------------------------------------------------
 
+    # `denied` : erreur rendue pour un 401 ou 403 persistant (droit absent
+    # du jeton pour cette route), au lieu de `credentials`.
     private def call(credentials : Credentials, method : String, path : String, body : String = "",
-                     content_type : String? = nil, allow : Array(Int32) = [] of Int32) : Remote::Response
+                     content_type : String? = nil, allow : Array(Int32) = [] of Int32,
+                     accept : String = "application/json, text/plain",
+                     denied : {String, Hash(String, String)}? = nil) : Remote::Response
       base = API_URLS[credentials.env]? || raise TransportError.new("teledec.errors.credentials.env")
       response = nil
       2.times do |attempt|
-        headers = HTTP::Headers{"Authorization" => "Bearer #{token(credentials).value}", "Accept" => "application/json, text/plain"}
+        headers = HTTP::Headers{"Authorization" => "Bearer #{token(credentials).value}", "Accept" => accept}
         content_type.try { |type| headers["Content-Type"] = type }
         response = @exchange.call(Remote::Request.new(method, "#{base}#{path}", headers, body))
         break unless response.status == 401 && attempt == 0
@@ -284,6 +381,9 @@ module Teledec
       end
       response = response.as(Remote::Response)
       return response if response.ok? || allow.includes?(response.status)
+      if denied && response.status.in?(401, 403)
+        raise TransportError.new(denied[0], denied[1])
+      end
       raise error(response)
     end
 
@@ -348,16 +448,16 @@ module Teledec
       fresh
     end
 
+    # Jeton portant tous les droits (`SCOPES`) ; si le service des jetons
+    # refuse un droit facultatif (`invalid_scope`), jeton sans eux.
     private def request_token(credentials : Credentials) : Token
       prefix = SCOPE_PREFIXES[credentials.env]? || raise TransportError.new("teledec.errors.credentials.env")
-      basic = Base64.strict_encode("#{credentials.login}:#{credentials.api_key}")
-      headers = HTTP::Headers{"Authorization" => "Basic #{basic}", "Content-Type" => "application/x-www-form-urlencoded",
-                              "Accept" => "application/json"}
-      body = URI::Params.build do |form|
-        form.add "grant_type", "client_credentials"
-        form.add "scope", SCOPES.map { |scope| "#{prefix}/#{scope}" }.join(' ')
+      response = token_response(credentials, prefix, SCOPES)
+      requested = SCOPES
+      if response.status == 400 && invalid_scope?(response.body)
+        requested = SCOPES - OPTIONAL_SCOPES
+        response = token_response(credentials, prefix, requested)
       end
-      response = @exchange.call(Remote::Request.new("POST", AUTH_URL, headers, body))
       if response.status.in?(400, 401, 403)
         raise TransportError.new("teledec.errors.transport.credentials")
       end
@@ -365,7 +465,31 @@ module Teledec
       answer = parse_object(response.body)
       value = answer["access_token"]?.try(&.as_s?) || raise TransportError.new("teledec.errors.transport.credentials")
       lifetime = answer["expires_in"]?.try { |item| item.as_i64? || item.as_s?.try(&.to_i64?) } || 3600_i64
-      Token.new(value, Time.utc + lifetime.seconds - TOKEN_MARGIN)
+      Token.new(value, Time.utc + lifetime.seconds - TOKEN_MARGIN, granted(answer, prefix, requested))
+    end
+
+    private def token_response(credentials : Credentials, prefix : String, scopes : Array(String)) : Remote::Response
+      basic = Base64.strict_encode("#{credentials.login}:#{credentials.api_key}")
+      headers = HTTP::Headers{"Authorization" => "Basic #{basic}", "Content-Type" => "application/x-www-form-urlencoded",
+                              "Accept" => "application/json"}
+      body = URI::Params.build do |form|
+        form.add "grant_type", "client_credentials"
+        form.add "scope", scopes.map { |scope| "#{prefix}/#{scope}" }.join(' ')
+      end
+      @exchange.call(Remote::Request.new("POST", AUTH_URL, headers, body))
+    end
+
+    private def invalid_scope?(body : String) : Bool
+      JSON.parse(body)["error"]?.try(&.as_s?) == "invalid_scope"
+    rescue JSON::ParseException | TypeCastError
+      body.includes?("invalid_scope")
+    end
+
+    # Droits du jeton : ceux que le service des jetons annonce (`scope`),
+    # sinon ceux demandés.
+    private def granted(answer : Hash(String, JSON::Any), prefix : String, requested : Array(String)) : Array(String)
+      announced = answer["scope"]?.try(&.as_s?) || return requested
+      announced.split(' ').compact_map(&.lchop?("#{prefix}/"))
     end
 
     # --- Outils -----------------------------------------------------------------
@@ -374,17 +498,6 @@ module Teledec
     # à la première transmission).
     private def require_password!(credentials : Credentials) : Nil
       raise TransportError.new("teledec.errors.transport.password") unless credentials.password_hash.starts_with?("$2")
-    end
-
-    # Adresse rendue par l'API Balance : texte brut, ou JSON (`url`,
-    # `lien`).
-    private def link(body : String) : String
-      text = body.strip
-      if text.starts_with?('{')
-        answer = parse_object(text)
-        return (answer["url"]? || answer["lien"]?).try(&.as_s?) || ""
-      end
-      text.starts_with?("http") ? text.lines.first.strip : ""
     end
 
     private def parse(body : String) : JSON::Any

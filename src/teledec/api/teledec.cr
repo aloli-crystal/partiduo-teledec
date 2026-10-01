@@ -303,7 +303,8 @@ module Teledec
     end
 
     # Interroge TELEDEC sur un dépôt transmis : accusé de réception
-    # (conservé en pièce jointe du socle) ou rejet (motif).
+    # (conservé en pièce jointe du socle) ou rejet (motif) ; pour un dépôt
+    # au greffe finalisé, son PDF signé, conservé lui aussi (D-TDC9-002).
     def self.refresh(actor : Actor, id : Int64) : Result(FilingView)
       Guard.authorize!(actor, TRANSMIT, module_code: MODULE_CODE)
       filing = find(id)
@@ -330,6 +331,10 @@ module Teledec
         current.remote_status = remote.remote_status[0, 32] unless remote.remote_status.empty?
         current.declaration_id = remote.declaration_id[0, 64] unless remote.declaration_id.empty?
         current.last_error = ""
+        if document = remote.document
+          refused = Filings.store_document(current, document, actor.user_id)
+          next Result(FilingView).failure(refused) unless refused.empty?
+        end
         unless remote.state == "acknowledged" || remote.state == "rejected"
           current.save!
           next Result(FilingView).success(Filings.view(current))
@@ -445,6 +450,16 @@ module Teledec
     def self.receipt_file(actor : Actor, id : Int64) : FileView?
       Guard.authorize!(actor, READ, module_code: MODULE_CODE)
       attachment_id = find(id).receipt_attachment_id || return
+      system = Actor.system
+      attachment = Partiduo::Api::Core.attachment(system, attachment_id.to_i64)
+      FileView.new(attachment.filename, attachment.content_type,
+        Partiduo::Api::Core.attachment_content(system, attachment_id.to_i64))
+    end
+
+    # PDF signé d'un dépôt au greffe conservé ; `nil` s'il n'y en a pas.
+    def self.document_file(actor : Actor, id : Int64) : FileView?
+      Guard.authorize!(actor, READ, module_code: MODULE_CODE)
+      attachment_id = find(id).document_attachment_id || return
       system = Actor.system
       attachment = Partiduo::Api::Core.attachment(system, attachment_id.to_i64)
       FileView.new(attachment.filename, attachment.content_type,

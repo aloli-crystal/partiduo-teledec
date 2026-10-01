@@ -46,6 +46,7 @@ module Teledec
       path "/filings/<id:int>/outcome", Teledec::Ui::OutcomeHandler, name: "outcome"
       path "/filings/<id:int>/export", Teledec::Ui::ExportHandler, name: "export"
       path "/filings/<id:int>/receipt", Teledec::Ui::ReceiptHandler, name: "receipt"
+      path "/filings/<id:int>/document", Teledec::Ui::DocumentHandler, name: "document"
       path "/settings", Teledec::Ui::SettingsHandler, name: "settings"
       path "/settings/credentials", Teledec::Ui::CredentialsHandler, name: "credentials"
       path "/settings/credentials/clear", Teledec::Ui::ClearCredentialsHandler, name: "clear_credentials"

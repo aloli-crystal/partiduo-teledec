@@ -46,9 +46,11 @@ module Teledec
   # `rejected` (motif dans `reason`). `remote_status` : état brut chez
   # TELEDEC, normalisé en minuscules (`notcompleted`, `readytobesent`,
   # `sent`, `ok`…) ; `declaration_id` : identifiant de la déclaration chez
-  # TELEDEC s'il est connu.
+  # TELEDEC s'il est connu. `document` : PDF signé du dépôt au greffe,
+  # servi par TELEDEC dès que le dépôt est finalisé (D-TDC9-002), à
+  # conserver en pièce jointe du dépôt.
   record RemoteStatus, state : String, reason : String = "", receipt : Receipt? = nil, at : Time? = nil,
-    remote_status : String = "", declaration_id : String = ""
+    remote_status : String = "", declaration_id : String = "", document : Receipt? = nil
 
   # Erreur du transport : `key` est une clé i18n (`teledec.errors.transport.*`)
   # traduite à l'affichage ; le message technique ne contient jamais de
@@ -83,6 +85,13 @@ module Teledec
     # (`Submission#reference`) ; un compte-rendu d'un envoi précédent (autre
     # référence) ne fait pas foi.
     abstract def status(credentials : Credentials, remote_id : String, reference : String = "") : RemoteStatus
+
+    # PDF d'un dépôt finalisé chez TELEDEC (greffe), désigné par le jeton
+    # de son lien (`lienPdf` des retours) ; `name` : nom du fichier rendu.
+    # Par défaut, aucun : `teledec.errors.transport.unsupported`.
+    def document(credentials : Credentials, token : String, name : String) : Receipt
+      raise TransportError.new("teledec.errors.transport.unsupported")
+    end
   end
 
   # Transport actif de l'instance : l'adaptateur de l'API partenaire de

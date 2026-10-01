@@ -11,20 +11,26 @@ describe "Millésimes des formulaires de TELEDEC (D-TDC6-001)" do
     Millesime.rank(2026).should eq(Millesime.rank(202601))
   end
 
-  it "liasse : campagne de l'année suivant une clôture au 31 décembre, de l'année de clôture sinon" do
+  it "liasse : année du lendemain de la clôture (réponses de TELEDEC du 1er octobre 2026)" do
     Millesime.campaign("liasse", "2024-12-31").should eq(2025) # exemple du guide de l'API Liasse
-    Millesime.campaign("liasse", "2025-12-31").should eq(2026)
+    Millesime.campaign("liasse", "2025-12-31").should eq(2026) # exemple de TELEDEC
+    Millesime.campaign("liasse", "2025-06-30").should eq(2025) # lendemain 01/07/2025
     Millesime.campaign("liasse", "2026-06-30").should eq(2026)
     Millesime.campaign("liasse", "2025-09-30").should eq(2025)
+    Millesime.campaign("liasse", "2025-12-30").should eq(2025) # lendemain 31/12/2025
+    Millesime.campaign("liasse", "2024-02-29").should eq(2024) # année bissextile
     Millesime.target("liasse", "2025-12-31").should eq(202601)
   end
 
-  it "DAS2 : sommes versées en N, campagne N + 1" do
+  it "DAS2 : année du lendemain de la clôture (sommes de 2025, campagne 2026)" do
     Millesime.campaign("das2", "2025-12-31").should eq(2026)
     Millesime.target("das2", "2025-12-31").should eq(202601)
   end
 
-  it "TVA : année de la période, palier pour une période close à partir du 1er juin 2025 ou 2026" do
+  it "TVA (palier interne, jamais transmis) : année de la période, palier pour une période close à partir du 1er juin 2025 ou 2026" do
+    Millesime.target("vat_ca3", "2025-02-28").should eq(202501) # 3310A de février 2025 → 2025
+    Millesime.pick([2024, 2025, 202502, 202601], Millesime.target("vat_ca3", "2025-02-28")).should eq(2025)
+    Millesime.target("vat_ca3", "2026-01-31").should eq(202601) # 3310TIC de janvier 2026 → 202601
     Millesime.campaign("vat_ca3", "2025-05-31").should eq(2025)
     Millesime.target("vat_ca3", "2025-05-31").should eq(202501)
     Millesime.target("vat_ca3", "2025-06-30").should eq(202502) # juin 2025, deuxième trimestre 2025

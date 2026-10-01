@@ -31,6 +31,7 @@ module Teledec
           "outcome_url"   => Ui.url("outcome", id: view.id),
           "export_url"    => Ui.url("export", id: view.id),
           "receipt_url"   => Ui.url("receipt", id: view.id),
+          "document_url"  => Ui.url("document", id: view.id),
           "prepare_url"   => Ui.url("prepare"),
           "balance_url"   => view.fiscal_year_id.try { |id| view.balance.empty? ? nil : Ui.url("balance", fiscal_year_id: id) },
           "back_url"      => view.fiscal_year_id.try { |id| "#{Ui.url("index")}?fy=#{id}" } || Ui.url("index"),
@@ -106,6 +107,15 @@ module Teledec
     class ReceiptHandler < Handler
       def get
         file = Api.receipt_file(current.actor, id_param)
+        return PartiduoUi::ErrorPage.render(request, 404) unless file
+        file_response(file)
+      end
+    end
+
+    # PDF signé d'un dépôt au greffe, relevé chez TELEDEC (D-TDC9-002).
+    class DocumentHandler < Handler
+      def get
+        file = Api.document_file(current.actor, id_param)
         return PartiduoUi::ErrorPage.render(request, 404) unless file
         file_response(file)
       end

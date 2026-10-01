@@ -14,6 +14,7 @@ en:
       unavailable: "Direct transmission to TELEDEC is disabled on this instance: prepare and check your returns here, import the trial balance on the TELEDEC website, then record the filing and its acknowledgement."
     actions:
       open_remote: "Open on TELEDEC"
+      open_greffe: "Complete the filing on TELEDEC"
       show: "Show"
       prepare: "Prepare"
       prepare_again: "Prepare again"
@@ -24,6 +25,7 @@ en:
       export: "Prepared document (JSON)"
       balance: "Export trial balance (TELEDEC import)"
       receipt: "Acknowledgement"
+      document: "Registry filing PDF"
       back: "Back to deadlines"
     deadlines:
       title: "Deadlines of the financial year"

@@ -317,10 +317,14 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       document["identity"]["fullRegimeFiscal"]?.should be_nil
     end
 
-    it "porte l'année de campagne : période pour la TVA, échéance pour les relevés d'IS" do
-      white_label(vat("vat_ca3", {"08.base" => "1"}, "2025-06-01", "2025-06-30"))["period"]["millesime"].as_i.should eq(2025)
+    it "porte l'année de campagne pour les relevés d'IS (échéance), aucun millésime pour la TVA" do
+      # TVA : TELEDEC ignore le millésime et déduit le palier de
+      # `period.end` (réponses du 1er octobre 2026, D-TDC9-003).
+      ca3 = white_label(vat("vat_ca3", {"08.base" => "1"}, "2025-06-01", "2025-06-30"))
+      ca3["period"]["millesime"]?.should be_nil
+      ca3["period"]["end"].as_s.should eq("2025-06-30")
       ca12 = vat("vat_ca12", {"08.base" => "1"}, "2025-01-01", "2025-12-31", "year")
-      white_label(ca12, submission("vat_ca12", "2026-05-05"))["period"]["millesime"].as_i.should eq(2025)
+      white_label(ca12, submission("vat_ca12", "2026-05-05"))["period"]["millesime"]?.should be_nil
       solde = Payload.new("is_2572", %w[2572], identity, "2025-01-01", "2025-12-31", details: {"tax" => "10", "advances" => "0"})
       white_label(solde, submission("is_2572", "2026-05-15"))["period"]["millesime"].as_i.should eq(2026)
       advance = Payload.new("is_2571", %w[2571], identity, "2026-01-01", "2026-12-31", number: 4, details: {"amount" => "10"})
@@ -354,7 +358,7 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       error.params["nature"].should eq("mystere")
     end
 
-    it "refuse une sorte sans formulaire de marque blanche" do
+    it "refuse une sorte sans formulaire de marque blanche (le greffe a sa propre amorce)" do
       payload = Payload.new("greffe", %w[greffe], identity, "2026-01-01", "2026-12-31")
       expect_raises(Teledec::TransportError, "teledec.errors.transport.unsupported") { white_label(payload) }
     end
@@ -382,6 +386,27 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       zones = Teledec::SpecSupport::LiasseBody.parse(text).zones
       # Clé = code de la case seul (réponses de TELEDEC du 29 septembre 2026).
       zones["2035A"].as_h.should eq({"AA" => JSON::Any.new(1235_i64), "AB" => JSON::Any.new(0_i64)})
+    end
+
+    it "porte l'adresse des rappels (#URL), la référence et la création automatique (guide de l'API Liasse)" do
+      rows = [Payload::BalanceRow.new("706", "Ventes", "0", "100.00", "0", "100.00")]
+      payload = Payload.new("liasse", %w[2065 2033], identity, "2025-07-01", "2026-06-30", balance: rows)
+      url = "https://dossier.exemple.fr/hooks/TELEDEC/callback"
+      lines = Formats.liasse(payload, submission("liasse", callback_url: url), credentials, "API", false, ACCOUNT).lines
+      lines.should contain("#URL #{url}")
+      lines.should contain("#REFERENCE partiduo-1-1-abcdef")
+      lines.should contain("#CREATION-AUTO OUI")
+      # Clôture au 30 juin 2026 : lendemain 1er juillet 2026, campagne 2026.
+      lines.should contain("#MILLESIME 2026")
+      # Sans adresse de rappel (mot de passe des rappels non réglé) : aucune ligne.
+      Formats.liasse(payload, submission("liasse"), credentials, "API", false, ACCOUNT).lines
+        .any?(&.starts_with?("#URL")).should be_false
+      # Clé réglable si TELEDEC en désigne une autre ; une valeur invalide garde `URL`.
+      Formats.liasse_callback_key("#url-retour").should eq("URL-RETOUR")
+      Formats.liasse_callback_key("pas valide !").should eq("URL")
+      Formats.liasse_callback_key(nil).should eq("URL")
+      Formats.liasse(payload, submission("liasse", callback_url: url), credentials, "API", false, ACCOUNT, "WEBHOOK").lines
+        .should contain("#WEBHOOK #{url}")
     end
 
     it "refuse toute case hors du schéma relevé des formulaires (TELEDEC l'ignorerait sans erreur)" do

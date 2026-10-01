@@ -4,13 +4,17 @@ require "base64"
 require "crypto/subtle"
 
 module Teledec
-  # Rappels de TELEDEC (webhook) : à chaque étape d'une déclaration
-  # (envoi, accusé ou rejet de la DGFiP), liasse comprise, TELEDEC poste un
-  # JSON (`declarationId`, `reference`, `status`, `declarationStatus`,
-  # `declarationErreurs`, `pdf` de l'accusé…) à l'adresse donnée dans le
-  # champ `url` de chaque dépôt en marque blanche (`auth.url`), ou à celle
-  # configurée chez TELEDEC pour le partenaire (la liasse n'a pas de champ
-  # d'adresse).
+  # Rappels de TELEDEC (webhook) : à l'envoi, à l'acceptation et au rejet
+  # par la DGFiP *seulement* — aucun au simple dépôt (réponses de TELEDEC
+  # du 1er octobre 2026, D-TDC9-004) —, TELEDEC poste un JSON
+  # (`declarationId`, `reference`, `status`, `declarationStatus`,
+  # `declarationErreurs`, `pdf` de l'accusé, `lienPdf`…) à l'adresse
+  # donnée dans chaque dépôt : `auth.url` en marque blanche et pour le
+  # greffe, `#URL` dans la liasse (API Balance, qui écrit aussi au compte
+  # de l'entreprise). Un rappel d'un dépôt au greffe finalisé qui porte
+  # `lienPdf` fait relever et conserver son PDF signé (D-TDC9-002) ; s'il ne
+  # peut être relevé, le dépôt reste transmis, l'erreur notée, et le suivi
+  # (`refresh`) reprend.
   #
   # Authentification (réponses de TELEDEC du 29 septembre 2026,
   # D-TDC3-006) : HTTP `Basic`, avec *un* mot de passe par partenaire,
@@ -121,29 +125,78 @@ module Teledec
         name = "#{report.state == "acknowledged" ? "accuse" : "rejet"}-#{report.form.presence || "teledec"}-#{report.declaration_id.presence || "declaration"}.pdf"
         Partiduo::Api::Core::AttachmentInput.new(name.gsub(/[^A-Za-z0-9._-]/, "_"), "application/pdf", IO::Memory.new(pdf))
       end
+      document, document_failed = greffe_document(report)
       outcome = Partiduo::Api::Transaction.run do
         Filings.lock!
         filing = concerned(report)
         next Partiduo::Api::Result(String).success("ignored") if filing.nil?
-        declaration_id = report.declaration_id[0, 64]
-        final = filing.status == "acknowledged" || filing.status == "rejected"
-        if final && (declaration_id.empty? || filing.declaration_id == declaration_id || filing.status == "acknowledged")
-          next Partiduo::Api::Result(String).success("ok")
-        end
-        next Partiduo::Api::Result(String).success("ignored") unless filing.status == "transmitted"
-        filing.declaration_id = declaration_id unless declaration_id.empty?
-        filing.remote_status = Remote::Formats.normalize(report.status)[0, 32] unless report.status.empty?
-        filing.last_error = ""
-        state = report.state
-        unless state == "acknowledged" || state == "rejected"
-          filing.save!
-          next Partiduo::Api::Result(String).success("ok")
-        end
-        applied = Filings.apply_outcome(filing, state, report.reason, attachment, report.at, nil)
-        next Partiduo::Api::Result(String).failure(applied.errors) if applied.failure?
-        Partiduo::Api::Result(String).success("ok")
+        apply(filing, report, attachment, document, document_failed)
       end
       outcome.success? ? outcome.value! : "invalid"
+    end
+
+    alias Outcome = Partiduo::Api::Result(String)
+
+    # Applique le rappel au dépôt relu sous le verrou.
+    private def self.apply(filing : Filing, report : Remote::Formats::Report,
+                           attachment : Partiduo::Api::Core::AttachmentInput?, document : Receipt?,
+                           document_failed : Bool) : Outcome
+      declaration_id = report.declaration_id[0, 64]
+      final = filing.status == "acknowledged" || filing.status == "rejected"
+      if final && (declaration_id.empty? || filing.declaration_id == declaration_id || filing.status == "acknowledged")
+        return replayed(filing, document)
+      end
+      return Outcome.success("ignored") unless filing.status == "transmitted"
+      filing.declaration_id = declaration_id unless declaration_id.empty?
+      filing.remote_status = Remote::Formats.normalize(report.status)[0, 32] unless report.status.empty?
+      filing.last_error = ""
+      if document
+        refused = Filings.store_document(filing, document, nil)
+        return Outcome.failure(refused) unless refused.empty?
+      end
+      state = report.state
+      # PDF du greffe non relevé : le dépôt reste transmis, le suivi
+      # reprendra l'accusé et le PDF ensemble.
+      filing.last_error = DOCUMENT_ERROR if document_failed
+      if document_failed || !(state == "acknowledged" || state == "rejected")
+        filing.save!
+        return Outcome.success("ok")
+      end
+      applied = Filings.apply_outcome(filing, state, report.reason, attachment, report.at, nil)
+      applied.failure? ? Outcome.failure(applied.errors) : Outcome.success("ok")
+    end
+
+    # Rappel rejoué pour un dépôt déjà accusé ou rejeté : rien ne change,
+    # sauf un PDF du greffe encore absent, repris.
+    private def self.replayed(filing : Filing, document : Receipt?) : Outcome
+      if document && filing.document_attachment_id.nil?
+        refused = Filings.store_document(filing, document, nil)
+        return Outcome.failure(refused) unless refused.empty?
+        filing.save!
+      end
+      Outcome.success("ok")
+    end
+
+    DOCUMENT_ERROR = "teledec.errors.transport.document"
+
+    # PDF signé d'un dépôt au greffe finalisé que le rappel désigne
+    # (`lienPdf`), relevé chez TELEDEC hors transaction ; rend aussi vrai si
+    # le relevé a échoué (transport absent, identifiants illisibles, refus
+    # ou panne de TELEDEC). Rien pour un autre dépôt, un dépôt dont le PDF
+    # est déjà conservé, ou un rappel sans lien.
+    private def self.greffe_document(report : Remote::Formats::Report) : {Receipt?, Bool}
+      token = Remote::Formats.pdf_token(report.pdf_link)
+      return {nil, false} unless token && Remote::Formats.finalized?(report.status)
+      filing = concerned(report)
+      return {nil, false} unless filing && filing.kind == "greffe" && filing.document_attachment_id.nil?
+      key = Remote::Formats::Key.parse(filing.remote_id.to_s) || return {nil, false}
+      transport = Transports.current || return {nil, true}
+      found = Filings.credentials(Settings.current!)
+      return {nil, true} if found.failure?
+      {transport.document(found.value!, token, HttpTransport.document_name(key)), false}
+    rescue ex : TransportError
+      Log.warn { "TELEDEC : PDF du dépôt au greffe non relevé (#{ex.key})" }
+      {nil, true}
     end
 
     # Dépôt que le rappel concerne : ni noté à la main, ni visé par un

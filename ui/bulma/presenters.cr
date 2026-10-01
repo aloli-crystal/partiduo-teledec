@@ -107,6 +107,8 @@ module Teledec
           "reason"             => view.rejection_reason.presence,
           "last_error"         => view.last_error.presence.try { |key| I18n.t(key, {"reason" => ""}) },
           "receipt"            => view.receipt_attachment_id ? "1" : nil,
+          "document"           => view.document_attachment_id ? "1" : nil,
+          "greffe"             => view.kind == "greffe" ? "1" : nil,
           "prepared_at"        => fmt.datetime(view.prepared_at),
           "transmitted_at"     => view.transmitted_at.try { |time| fmt.datetime(time) },
           "acknowledged"       => view.acknowledged_at.try { |time| fmt.datetime(time) },

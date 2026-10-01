@@ -127,7 +127,8 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     document["period"]["begin"].as_s.should eq("2026-03-01")
     document["period"]["end"].as_s.should eq("2026-03-31")
     document["period"]["echeance"].as_s.should eq("2026-04-19")
-    document["period"]["millesime"].as_i.should eq(2026)
+    # TVA : pas de millésime, TELEDEC le déduit de `period.end` (D-TDC9-003).
+    document["period"]["millesime"]?.should be_nil
     document["period"]["montant"].as_i.should eq(200)
     boxes = document["3310CA3"].as_h
     boxes["CA"].as_i.should eq(1000) # ligne A1
@@ -249,13 +250,21 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     I18n.t("teledec.remote_statuses.completewitherrors").should contain("Contrôles de TELEDEC")
   end
 
-  it "refuse le dépôt au greffe, qui ne passe pas par l'API (redirection en marque blanche)" do
+  it "amorce le dépôt au greffe par nouvelle-declaration et rend l'adresse de redirection" do
     S.books
     sale
     S.connect
     Api.update_settings(S::SYSTEM, Api::SettingsInput.new("is_rsi", "ca3_monthly", greffe: true)).value!
     filing = S.prepare("greffe", fiscal_year_id: S.fiscal_year_id)
-    Api.transmit(S.admin, filing.id).error_keys.should eq(["teledec.errors.transport.greffe"])
+    sent = Api.transmit(S.admin, filing.id, base_url: "https://dossier.exemple.fr").value!
+    sent.remote_id.should eq("greffe:732829320:2026-12-31")
+    sent.remote_url.should start_with("https://stage.teledec.fr/service/autologin/")
+    document = JSON.parse(last_request("/service/nouvelle-declaration").body)
+    document["formulaire"].as_s.should eq("greffe")
+    document["auth"]["email"].as_s.should eq(Teledec::SimulatedTeledec::ACCOUNT)
+    document["auth"]["url"].as_s.should eq("https://dossier.exemple.fr/hooks/TELEDEC/callback")
+    document["identity"]["legalForm"].as_s.should eq("SRL")
+    document["period"]["end"].as_s.should eq("2026-12-31")
   end
 
   it "note le rejet avec les erreurs de la DGFiP, et lit les comptes-rendus à défaut du suivi" do

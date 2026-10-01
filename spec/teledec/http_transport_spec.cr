@@ -42,8 +42,8 @@ private def credentials(email : String = "compta@atelier-brunet.test", env : Str
     account_ready: account_ready)
 end
 
-private def payload(kind : String) : String
-  identity = Teledec::Payload::Identity.new("Atelier Brunet SARL", "SARL", "732829320", "", "", nil, "", "69002", "Lyon",
+private def payload(kind : String, legal_form : String = "SARL") : String
+  identity = Teledec::Payload::Identity.new("Atelier Brunet SARL", legal_form, "732829320", "", "", nil, "", "69002", "Lyon",
     "FR", "")
   boxes = kind == "vat_ca3" ? {"3310-CA3" => {"08.base" => "100", "08.tax" => "20", "32" => "20"}} : nil
   Teledec::Payload.new(kind, [kind], identity, "2026-03-01", "2026-03-31", boxes: boxes).to_json
@@ -148,8 +148,8 @@ describe "Adaptateur HTTP de TELEDEC : jeton, erreurs et réponses inattendues" 
       .should eq("teledec.errors.transport.user_domain")
     error_of { transport(exchange).submit(credentials(password_hash: ""), submission("vat_ca3")) }.key
       .should eq("teledec.errors.transport.password")
-    error_of { transport(exchange).submit(credentials, submission("greffe")) }.key
-      .should eq("teledec.errors.transport.greffe")
+    error_of { transport(exchange).submit(credentials, submission("greffe", payload("greffe", "SCI"))) }.key
+      .should eq("teledec.errors.transport.greffe_legal_form")
     exchange.requests.should be_empty
     error_of { transport(exchange).submit(credentials, submission("vat_ca3", "{pas du json")) }.key
       .should eq("teledec.errors.transport.invalid")

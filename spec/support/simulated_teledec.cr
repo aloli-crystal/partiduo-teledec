@@ -13,8 +13,9 @@ module Teledec
   # lien rendu, formulaire principal du régime exigé à son millésime), suivi
   # (`declaration-status`, comptes-rendus, 404 sans déclaration, compte
   # inconnu), création d'entreprise (mot de passe bcrypt ; seule à créer le
-  # compte)
-  # et corps des rappels. Aucun appel réseau. Domaine des comptes en marque
+  # compte), amorce du dépôt au greffe (`nouvelle-declaration`, droit du
+  # jeton exigé, adresse de redirection rendue), PDF du dépôt finalisé
+  # (`declarationPdf`, jeton de `lienPdf`) et corps des rappels. Aucun appel réseau. Domaine des comptes en marque
   # blanche : `partiduo.test` (fictif, jamais résolu).
   class SimulatedTeledec < HttpTransport
     LOGIN   = "cabinet-test"
@@ -37,7 +38,7 @@ module Teledec
     end
 
     delegate deposits, failure, acknowledge, reject, reject_with_errors, callback_body, expire_tokens!,
-      token_requests, requests, accounts, to: @server
+      token_requests, requests, accounts, finalize_greffe, refused_scopes, to: @server
 
     def failure=(reason : String?) : String?
       @server.failure = reason
@@ -81,6 +82,8 @@ module Teledec
         property status : String
         property callback_url : String?
         property report : Hash(String, JSON::Any)?
+        # `lienPdf` du dépôt au greffe finalisé.
+        property pdf_link : String? = nil
 
         def initialize(@remote_id, @form, @reference, @body, @env, @email, @declaration_id, @status, @callback_url = nil)
         end
@@ -91,7 +94,7 @@ module Teledec
         end
       end
 
-      record Token, value : String, prefix : String, expires_at : Time
+      record Token, value : String, prefix : String, expires_at : Time, scopes : Array(String) = [] of String
 
       getter deposits = {} of String => Deposit
       getter requests = [] of Remote::Request
@@ -100,6 +103,11 @@ module Teledec
       getter accounts = {} of String => String
       # Motif de refus programmé de la prochaine déclaration.
       property failure : String? = nil
+      # Droits que le client n'a pas (un jeton qui en demande un est refusé
+      # `invalid_scope`, comme le service des jetons de TELEDEC).
+      getter refused_scopes = Set(String).new
+      # Jeton du PDF de chaque dépôt au greffe finalisé → contenu.
+      getter documents = {} of String => String
       # `false` : le suivi ne joint pas les comptes-rendus (l'adaptateur les
       # relève par `/service/recuperation-liste-compterendus`).
       property? reports_in_status : Bool = true
@@ -120,7 +128,13 @@ module Teledec
         when {"GET", "/service/declaration-status"}              then status(request)
         when {"GET", "/service/recuperation-liste-compterendus"} then reports(request)
         when {"POST", "/service/creation-entreprise"}            then company(request)
-        else                                                          text(404, "Not Found")
+        when {"POST", "/service/nouvelle-declaration"}           then new_declaration(request, prefix)
+        else
+          if request.method == "GET" && (match = uri.path.match(%r{\A/service/declarationPdf/([^/]+)/teledec-liasse-fiscale\.pdf\z}))
+            pdf(match[1])
+          else
+            text(404, "Not Found")
+          end
         end
       end
 
@@ -130,11 +144,37 @@ module Teledec
         nil
       end
 
-      # Accusé de réception de la DGFiP (état `OK`, accusé en PDF).
+      # Accusé de réception de la DGFiP (état `OK`, accusé en PDF) ; un
+      # dépôt au greffe accepté est finalisé (`lienPdf`).
       def acknowledge(remote_id : String) : Nil
         deposit = deposits[remote_id]
         deposit.status = "OK"
-        deposit.report = report(deposit, "OK", "Accepted", {"pdf" => JSON::Any.new(Base64.strict_encode(PDF))})
+        extra = {"pdf" => JSON::Any.new(Base64.strict_encode(PDF))}
+        if deposit.form == "greffe"
+          extra["lienPdf"] = JSON::Any.new(finalized_link(deposit))
+        end
+        deposit.report = report(deposit, "OK", "Accepted", extra)
+      end
+
+      # Dépôt au greffe finalisé par l'utilisateur chez TELEDEC (état
+      # `Sent`) : son PDF signé est servi, `lienPdf` le désigne (suivi et
+      # rappel).
+      def finalize_greffe(remote_id : String) : String
+        deposit = deposits[remote_id]
+        deposit.status = "Sent"
+        link = finalized_link(deposit)
+        deposit.report = report(deposit, "SENT", "Sent", {"lienPdf" => JSON::Any.new(link)})
+        link
+      end
+
+      private def finalized_link(deposit : Deposit) : String
+        existing = deposit.pdf_link
+        return existing if existing
+        token = "eyJ#{Random::Secure.urlsafe_base64(24)}"
+        documents[token] = "%PDF-1.7\n% dépôt au greffe signé #{deposit.remote_id}\n%%EOF\n"
+        link = "https://#{deposit.env == "stage" ? "stage" : "www"}.teledec.fr/service/declarationPdf/#{token}/teledec-liasse-fiscale.pdf"
+        deposit.pdf_link = link
+        link
       end
 
       # Rejet de la DGFiP, motif en `erreurLibelle`.
@@ -173,8 +213,10 @@ module Teledec
         scopes = params["scope"]?.to_s.split(' ').reject(&.empty?)
         prefixes = scopes.map(&.split('/').first).uniq!
         return json(400, {"error" => "invalid_scope"}) unless prefixes.size == 1 && BASE.values.includes?(prefixes.first)
+        names = scopes.map(&.split('/', 2).last)
+        return json(400, {"error" => "invalid_scope"}) if names.any? { |name| refused_scopes.includes?(name) }
         value = "sim-#{@token_requests}-#{Random::Secure.hex(8)}"
-        @tokens[value] = Token.new(value, prefixes.first, Time.utc + 1.hour)
+        @tokens[value] = Token.new(value, prefixes.first, Time.utc + 1.hour, names)
         json(200, {"access_token" => value, "expires_in" => 3600, "token_type" => "Bearer"})
       end
 
@@ -185,6 +227,11 @@ module Teledec
         return text(401, "The Token has expired.") if token.expires_at < Time.utc
         return text(401, "The Token scope does not match.") unless token.prefix == prefix
         nil
+      end
+
+      # Droit `scope` porté par le jeton de la requête (déjà authentifiée).
+      private def scope?(request : Remote::Request, scope : String) : Bool
+        @tokens[request.headers["Authorization"].lchop("Bearer ")].scopes.includes?(scope)
       end
 
       private def liasse(request : Remote::Request, prefix : String) : Remote::Response
@@ -269,6 +316,38 @@ module Teledec
         end
       end
 
+      # Amorce d'une nouvelle déclaration (greffe) : droit
+      # `nouvelle-declaration` exigé (403 sinon), `formulaire: "greffe"`,
+      # compte de l'entreprise connu, horodatage récent ; rend l'adresse de
+      # redirection (connexion automatique), forme supposée (`url`,
+      # D-TDC9-001).
+      private def new_declaration(request : Remote::Request, prefix : String) : Remote::Response
+        return text(403, "Forbidden") unless scope?(request, "nouvelle-declaration")
+        document = JSON.parse(request.body).as_h rescue return json(400, {"message" => "JSON invalide"})
+        return json(400, {"message" => "formulaire inconnu"}) unless document["formulaire"]?.try(&.as_s?) == "greffe"
+        auth = document["auth"]?.try(&.as_h?) || return json(400, {"message" => "auth absent"})
+        email = auth["email"]?.try(&.as_s?).to_s
+        return text(400, UNKNOWN_USER) unless accounts.has_key?(email)
+        stamp = auth["timestamp"]?.try(&.as_s?).to_s
+        at = (Time.parse(stamp, "%Y-%m-%dT%H:%M:%S", Remote::Formats::PARIS) rescue nil)
+        return json(400, {"message" => "timestamp invalide"}) if at.nil? || at > Time.utc + 5.minutes || at < Time.utc - 1.hour
+        identity = document["identity"]?.try(&.as_h?) || return json(400, {"message" => "identity absent"})
+        period = document["period"]?.try(&.as_h?) || return json(400, {"message" => "period absent"})
+        return json(400, {"message" => failure.to_s}) if failure
+        siren = identity["siret"]?.try(&.as_s?).to_s[0, 9]
+        remote_id = "greffe:#{siren}:#{period["end"]?.try(&.as_s?)}"
+        deposit = store(remote_id, "greffe", period["reference"]?.try(&.as_s?).to_s, request.body, prefix, email,
+          "NotCompleted", auth["url"]?.try(&.as_s?))
+        host = prefix == "stage" ? "stage" : "www"
+        json(200, {"url" => "https://#{host}.teledec.fr/service/autologin/#{deposit.declaration_id}?redirect=greffe"})
+      end
+
+      # PDF d'un dépôt finalisé, par le jeton de son lien.
+      private def pdf(token : String) : Remote::Response
+        content = documents[token]? || return text(404, "Not Found")
+        Remote::Response.new(200, content, "application/pdf")
+      end
+
       private def status(request : Remote::Request) : Remote::Response
         params = request.query_params
         return text(400, UNKNOWN_USER) unless accounts.has_key?(params["email"]?.to_s)
@@ -276,6 +355,7 @@ module Teledec
         return text(400, UNKNOWN_USER) if deposit && deposit.email != params["email"]?
         return json(404, {"message" => "declaration not found", "status" => "ERREUR"}) unless deposit
         answer = {"status" => JSON::Any.new(deposit.status)}
+        deposit.pdf_link.try { |link| answer["lienPdf"] = JSON::Any.new(link) }
         if reports_in_status?
           deposit.report.try { |report| answer["compteRendus"] = JSON::Any.new([JSON::Any.new(report)]) }
         end
@@ -330,6 +410,7 @@ module Teledec
           existing.body = body
           existing.status = status unless existing.status == "OK"
           existing.report = nil unless existing.status == "OK"
+          existing.pdf_link = nil unless existing.status == "OK"
           existing.callback_url = callback_url
           return existing
         end
@@ -367,6 +448,7 @@ module Teledec
       private def declaration_type(form : String) : String
         case form
         when "liasse"       then "Liasse"
+        when "greffe"       then "Greffe"
         when "DAS2"         then "Part"
         when "2571", "2572" then "Paiement"
         else                     "TVA"

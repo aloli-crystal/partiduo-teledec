@@ -14,6 +14,7 @@ nl:
       unavailable: "Rechtstreekse verzending naar TELEDEC is uitgeschakeld op deze instantie: bereid uw aangiften hier voor en controleer ze, laad de balans op de website van TELEDEC en noteer daarna de indiening en het ontvangstbewijs."
     actions:
       open_remote: "Openen op TELEDEC"
+      open_greffe: "Neerlegging afronden op TELEDEC"
       show: "Tonen"
       prepare: "Voorbereiden"
       prepare_again: "Opnieuw voorbereiden"
@@ -24,6 +25,7 @@ nl:
       export: "Voorbereid document (JSON)"
       balance: "Balans exporteren (import TELEDEC)"
       receipt: "Ontvangstbewijs"
+      document: "Pdf van de neerlegging"
       back: "Terug naar de termijnen"
     deadlines:
       title: "Termijnen van het boekjaar"

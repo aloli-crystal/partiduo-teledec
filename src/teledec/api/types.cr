@@ -77,7 +77,9 @@ module Teledec
 
     record EventView, status : String, detail : String, user_id : Int64?, at : Time
 
-    # Dépôt : document préparé et son suivi.
+    # Dépôt : document préparé et son suivi. `receipt_attachment_id` :
+    # accusé de réception ou certificat de rejet ; `document_attachment_id` :
+    # PDF signé d'un dépôt au greffe (D-TDC9-002) ; pièces jointes du socle.
     record FilingView,
       id : Int64,
       key : String,
@@ -111,7 +113,8 @@ module Teledec
       prepared_at : Time,
       transmitted_at : Time?,
       acknowledged_at : Time?,
-      rejected_at : Time? do
+      rejected_at : Time?,
+      document_attachment_id : Int64? = nil do
       def ready? : Bool
         controls.none?(&.error?)
       end

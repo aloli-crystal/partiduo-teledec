@@ -51,6 +51,26 @@ module Teledec
     DAS2_ACCOUNTS  = {"6226" => "fees", "6221" => "commissions", "6222" => "commissions", "6516" => "copyright"}
     DAS2_THRESHOLD = BigDecimal.new(1200)
 
+    # Formes juridiques admises au dépôt des comptes au greffe : le greffe
+    # n'est proposé qu'aux formes qui déposent leurs comptes ; une SCI, une
+    # EI ou une association n'y sont pas éligibles (réponses de TELEDEC du
+    # 1er octobre 2026). TELEDEC ne publie pas de liste : *hypothèse*
+    # consignée (D-TDC9-001) — les sociétés commerciales, tenues de déposer
+    # leurs comptes annuels (code de commerce, art. L232-21 à L232-23) :
+    # SARL, EURL, SAS, SASU, SA, SCA, SNC, SCS, et les sociétés d'exercice
+    # libéral à forme commerciale (SELARL, SELEURL, SELAS, SELASU, SELAFA,
+    # SELCA). Écartées : entreprises individuelles (EI, EIRL, micro),
+    # sociétés civiles (SCI, SCM, SCP, SCEA, GAEC, EARL), associations,
+    # GIE, indivisions, LMNP et formes inconnues. Comparaison sur les seules
+    # lettres, en capitales (« S.A.R.L. » → `SARL`).
+    GREFFE_LEGAL_FORMS = %w[SARL EURL SAS SASU SA SCA SNC SCS SELARL SELEURL SELAS SELASU SELAFA SELCA]
+
+    # La forme juridique `legal_form` (texte libre de la société) dépose-t-elle
+    # ses comptes au greffe ?
+    def self.greffe_eligible?(legal_form : String) : Bool
+      GREFFE_LEGAL_FORMS.includes?(legal_form.upcase.gsub(/[^A-Z]/, ""))
+    end
+
     # Formulaires d'une sorte de déclaration.
     def self.forms(kind : String, tax_system : String) : Array(String)
       case kind
