@@ -511,14 +511,16 @@ module Teledec
     end
 
     # Jeton portant tous les droits (`SCOPES`) ; si le service des jetons
-    # refuse un droit facultatif (`invalid_scope`), jeton sans eux.
+    # refuse un droit facultatif (`invalid_scope`), chaque droit facultatif
+    # est essayé à part et seuls ceux qu'il accorde sont gardés : un droit
+    # refusé (le greffe) ne fait pas perdre un droit accordé (la liste des
+    # déclarations, D-TDC12-005).
     private def request_token(credentials : Credentials) : Token
       prefix = SCOPE_PREFIXES[credentials.env]? || raise TransportError.new("teledec.errors.credentials.env")
       response = token_response(credentials, prefix, SCOPES)
       requested = SCOPES
       if response.status == 400 && invalid_scope?(response.body)
-        requested = SCOPES - OPTIONAL_SCOPES
-        response = token_response(credentials, prefix, requested)
+        requested, response = optional_token(credentials, prefix)
       end
       if response.status.in?(400, 401, 403)
         raise TransportError.new("teledec.errors.transport.credentials")
@@ -528,6 +530,23 @@ module Teledec
       value = answer["access_token"]?.try(&.as_s?) || raise TransportError.new("teledec.errors.transport.credentials")
       lifetime = answer["expires_in"]?.try { |item| item.as_i64? || item.as_s?.try(&.to_i64?) } || 3600_i64
       Token.new(value, Time.utc + lifetime.seconds - TOKEN_MARGIN, granted(answer, prefix, requested))
+    end
+
+    # Droits obligatoires plus chaque droit facultatif accordé, un à un ;
+    # rend les droits demandés et la réponse du dernier jeton accordé.
+    private def optional_token(credentials : Credentials, prefix : String) : {Array(String), Remote::Response}
+      requested = SCOPES - OPTIONAL_SCOPES
+      accepted = nil
+      OPTIONAL_SCOPES.each do |scope|
+        trial = token_response(credentials, prefix, requested + [scope])
+        if trial.ok?
+          requested += [scope]
+          accepted = trial
+        elsif !(trial.status == 400 && invalid_scope?(trial.body))
+          return {requested + [scope], trial}
+        end
+      end
+      {requested, accepted || token_response(credentials, prefix, requested)}
     end
 
     private def token_response(credentials : Credentials, prefix : String, scopes : Array(String)) : Remote::Response

@@ -46,11 +46,13 @@ describe "Suivi par la liste des déclarations de TELEDEC (D-TDC12-001 à 003)" 
     refreshed = Api.refresh(S.admin, das2.id).value!
     {refreshed.status, refreshed.remote_status, refreshed.last_error}.should eq({"transmitted", "notfound", ""})
     paths.should_not contain("/service/declarations")
-    # Demandé d'abord, refusé (`invalid_scope`), puis jeton sans lui.
+    # Demandé d'abord, refusé (`invalid_scope`), puis jeton sans lui ; le
+    # droit du greffe, accordé ici, est gardé.
     scopes = S.teledec.requests.select(&.url.==(Teledec::HttpTransport::AUTH_URL))
       .map { |request| URI::Params.parse(request.body)["scope"].split(' ') }
     scopes.first.should contain("stage/liste-declarations")
-    scopes.last.should_not contain("stage/liste-declarations")
+    scopes.any? { |list| list.includes?("stage/nouvelle-declaration") && !list.includes?("stage/liste-declarations") }
+      .should be_true
   end
 
   it "lit dans la liste l'état d'une DAS2 que le suivi ne trouve pas : Created, son identifiant, jamais ses liens" do
@@ -116,5 +118,15 @@ describe "Suivi par la liste des déclarations de TELEDEC (D-TDC12-001 à 003)" 
     item = Formats.listed(JSON.parse(body))
     item.should eq(Formats::Listed.new("286182", "Liasse", "2025-01-01", "2025-12-31", "Created", ""))
     Formats.listed(JSON.parse("[]")).should be_nil
+  end
+end
+
+describe "Droits facultatifs du jeton (D-TDC12-005)" do
+  it "garde le droit de la liste quand seul le droit du greffe est refusé" do
+    Teledec::Transports.current = Teledec::SimulatedTeledec.new.tap(&.refused_scopes.add("nouvelle-declaration"))
+    S.teledec.hidden_until_opened << "DAS2"
+    das2 = transmitted_das2
+    Api.refresh(S.admin, das2.id).value!.remote_status.should eq("created")
+    paths.should contain("/service/declarations")
   end
 end

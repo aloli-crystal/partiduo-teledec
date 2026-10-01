@@ -175,12 +175,16 @@ describe "Dépôt au greffe par TELEDEC (réponses du 1er octobre 2026)" do
     it "prend un jeton sans le droit facultatif si le service des jetons le refuse ; seul le greffe est alors refusé" do
       exchange = GreffeExchange.new.reset("/oauth2/token")
         .script("/oauth2/token", 400, %({"error": "invalid_scope"}))
+        .script("/oauth2/token", 400, %({"error": "invalid_scope"}))
         .script("/oauth2/token", 200, %({"access_token": "jeton-2", "expires_in": 3600}))
       adapter = transport(exchange)
       adapter.check(credentials)
       tokens = exchange.requests.select(&.path.==("/oauth2/token"))
-      tokens.size.should eq(2)
-      URI::Params.parse(tokens.last.body)["scope"].split(' ').should_not contain("stage/nouvelle-declaration")
+      tokens.size.should eq(3)
+      # Le droit refusé (greffe) n'emporte pas le droit accordé (liste).
+      kept = URI::Params.parse(tokens.last.body)["scope"].split(' ')
+      kept.should_not contain("stage/nouvelle-declaration")
+      kept.should contain("stage/liste-declarations")
       error = error_of { adapter.submit(credentials, greffe_submission) }
       error.key.should eq("teledec.errors.transport.scope")
       exchange.requests.map(&.path).should_not contain("/service/nouvelle-declaration")
