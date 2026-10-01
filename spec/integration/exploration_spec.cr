@@ -30,6 +30,21 @@ require "../spec_helper"
 #    60 s, puis avec des variantes de paramètres, et la liste des
 #    déclarations de l'entreprise : délai ou paramètres faux ?
 #
+# Troisième série (D-TDC11-003), après la deuxième :
+#
+# 8. *Jetons de la liste* : droits `stage/liste-declarations` et, à part,
+#    `stage/mes-declarations` demandés au service des jetons (réponse
+#    affichée sans le jeton), et jeton sans droit nommé (tous ceux du
+#    partenaire, d'après la documentation).
+# 9. *Liste des déclarations* : si `liste-declarations` est accordé, dépôts
+#    d'une DAS2 et d'une liasse puis, aussitôt, `GET /service/declarations`
+#    (liens retirés) : le dépôt existe-t-il, sous quels formulaire, dates et
+#    statut ? Puis `declaration-status` avec exactement ces valeurs.
+# 10. *Lien ouvert* : après le dépôt d'une DAS2, simple `GET` de l'adresse
+#    rendue (redirections suivies, sur le stage seulement, rien cliqué ni
+#    envoyé), puis suivi et liste : le dépôt n'existerait-il chez TELEDEC
+#    qu'une fois le lien ouvert ?
+#
 # Activée seulement si `~/.config/partiduo/teledec-sandbox.env` porte les
 # identifiants du stage *et* si `TELEDEC_EXPLORATION=1` ; exige aussi le
 # domaine du partenaire (`TELEDEC_USER_DOMAIN`). Tout part sur le stage,
@@ -252,25 +267,116 @@ module Teledec::Exploration
   end
 
   # Demande brute d'un jeton au service des jetons, avec les droits
-  # `scopes` (préfixe compris) : rend l'issue, la réponse sans le jeton
-  # (statut, erreur, droits annoncés), et le jeton s'il est accordé.
-  def self.token_probe(credentials : Credentials, scopes : Array(String)) : {Bool, String, String?}
+  # `scopes` (préfixe compris ; liste vide : aucun paramètre `scope`, tous
+  # les droits du partenaire selon la documentation) : rend l'issue, la
+  # réponse sans le jeton (statut, erreur, droits annoncés), le jeton s'il
+  # est accordé et les droits annoncés (sans préfixe).
+  def self.token_probe(credentials : Credentials, scopes : Array(String)) : {Bool, String, String?, Array(String)}
     basic = Base64.strict_encode("#{credentials.login}:#{credentials.api_key}")
     headers = HTTP::Headers{"Authorization" => "Basic #{basic}", "Content-Type" => "application/x-www-form-urlencoded",
                             "Accept" => "application/json"}
     body = URI::Params.build do |form|
       form.add "grant_type", "client_credentials"
-      form.add "scope", scopes.join(' ')
+      form.add "scope", scopes.join(' ') unless scopes.empty?
     end
     response = Remote::Net.new.call(Remote::Request.new("POST", HttpTransport::AUTH_URL, headers, body))
     answer = (JSON.parse(response.body).as_h? rescue nil) || {} of String => JSON::Any
     token = answer["access_token"]?.try(&.as_s?)
+    announced = answer["scope"]?.try(&.as_s?)
     if response.ok? && token
-      {true, "HTTP #{response.status}, droits annoncés : #{answer["scope"]?.try(&.as_s?) || "(aucun champ scope)"}", token}
+      names = announced.try(&.split(' ').reject(&.empty?).map(&.lchop("stage/"))) || [] of String
+      {true, "HTTP #{response.status}, droits annoncés : #{announced || "(aucun champ scope)"}", token, names}
     else
       reason = %w[error error_description message].compact_map { |name| answer[name]?.try(&.as_s?) }.join(" — ")
-      {false, "HTTP #{response.status} : #{reason.presence || response.body.strip[0, 200]}", nil}
+      {false, "HTTP #{response.status} : #{reason.presence || response.body.strip[0, 200]}", nil, [] of String}
     end
+  end
+
+  # Droits de l'adaptateur réel, sans les facultatifs, préfixe du stage.
+  def self.adapter_scopes : Array(String)
+    (HttpTransport::SCOPES - HttpTransport::OPTIONAL_SCOPES).map { |scope| "stage/#{scope}" }
+  end
+
+  # Droit de la liste des déclarations (`GET /service/declarations`).
+  LIST_SCOPE = "liste-declarations"
+
+  # Client portant les droits de l'adaptateur et `liste-declarations` :
+  # demandés ensemble, sinon jeton sans droit nommé s'il annonce ce droit ;
+  # `nil` si le service des jetons ne l'accorde pas.
+  def self.list_client(credentials : Credentials) : Client?
+    scopes = adapter_scopes + ["stage/#{LIST_SCOPE}"]
+    accepted, _, token, _ = token_probe(credentials, scopes)
+    return Client.new(token, scopes.map(&.lchop("stage/"))) if accepted && token
+    accepted, _, token, announced = token_probe(credentials, [] of String)
+    Client.new(token, announced) if accepted && token && announced.includes?(LIST_SCOPE)
+  end
+
+  # Déclarations listées par TELEDEC (`GET /service/declarations`), objets
+  # bruts ; `nil` et la réponse lisible si la route refuse.
+  def self.listed(client : Client, email : String, siren : String) : {Array(Hash(String, JSON::Any))?, String}
+    query = URI::Params.build do |form|
+      form.add "siren", siren
+      form.add "email", email
+    end
+    response = client.get("/service/declarations?#{query}")
+    return {nil, "HTTP #{response.status} : #{message(response)}"} unless response.ok?
+    parsed = JSON.parse(response.body)
+    items = parsed.as_a? || parsed.as_h?.try { |hash| hash.values.find(&.as_a?).try(&.as_a) } || [parsed]
+    {items.compact_map(&.as_h?), "HTTP 200"}
+  rescue JSON::ParseException
+    {nil, "réponse illisible"}
+  end
+
+  # Suivi interrogé avec exactement les valeurs d'une déclaration listée :
+  # formulaire (champ `formulaire` s'il existe, sinon `declarationType`,
+  # puis le code de l'adaptateur), `dateFin`, et `date_echeance` si la
+  # liste en donne une.
+  def self.status_from_listed(client : Client, email : String, siren : String, item : Hash(String, JSON::Any),
+                              fallback : String) : Array({String, Bool, String})
+    date_fin = item["dateFin"]?.try(&.as_s?) || "2025-12-31"
+    echeance = %w[dateEcheance date_echeance echeance].compact_map { |name| item[name]?.try(&.as_s?) }.first?
+    forms = [item["formulaire"]?.try(&.as_s?), item["declarationType"]?.try(&.as_s?), fallback].compact.uniq!
+    forms.map do |form|
+      params = {"email" => email, "siren" => siren, "date_fin" => date_fin, "formulaire" => form}
+      echeance.try { |day| params["date_echeance"] = day }
+      found, detail = status_answer(client, params)
+      {"formulaire #{form}, date_fin #{date_fin}#{echeance ? ", date_echeance #{echeance}" : ""}", found, detail}
+    end
+  end
+
+  # Ouvre l'adresse rendue par la marque blanche comme un navigateur : `GET`
+  # seuls, redirections suivies (cinq au plus) avec leurs cookies, sur le
+  # stage seulement ; rien n'est cliqué ni envoyé. Rend l'issue et les
+  # étapes (adresses tronquées, titre de la page).
+  def self.open_link(url : String) : {Bool, String}
+    steps = [] of String
+    cookies = HTTP::Cookies.new
+    current = URI.parse(url)
+    6.times do
+      unless current.scheme == "https" && current.host == URI.parse(STAGE).host
+        return {false, "#{steps.join(" → ")} ; adresse hors du stage, non ouverte : #{Sandbox.truncated(current.to_s)}"}
+      end
+      headers = HTTP::Headers{"Accept" => "text/html,application/xhtml+xml"}
+      cookies.add_request_headers(headers)
+      client = HTTP::Client.new(current)
+      client.connect_timeout = 10.seconds
+      client.read_timeout = 60.seconds
+      response = begin
+        client.get(current.request_target, headers: headers)
+      ensure
+        client.close
+      end
+      cookies.fill_from_server_headers(response.headers)
+      steps << "HTTP #{response.status_code} #{Sandbox.truncated(current.to_s)}"
+      if response.status.redirection? && (location = response.headers["Location"]?)
+        current = current.resolve(location)
+        next
+      end
+      title = response.body.match(/<title[^>]*>(.*?)<\/title>/im).try(&.[1].strip)
+      return {response.success?, "#{steps.join(" → ")} ; #{response.content_type || "type inconnu"}, " \
+                                 "#{response.body.bytesize} octets, titre « #{title || "aucun"} »"}
+    end
+    {false, "#{steps.join(" → ")} ; plus de cinq redirections"}
   end
 
   # --- Entreprises de test ------------------------------------------------------
@@ -396,7 +502,7 @@ private alias Sandbox = Teledec::SandboxSpec
 
 describe "Exploration du stage de TELEDEC (optionnelle)" do
   it "forme des SIREN et des SIRET fictifs à clé valide, distincts" do
-    numbers = (1..14).to_a + [20, 21, 30, 31] + (40..47).to_a + [50, 51]
+    numbers = (1..14).to_a + [20, 21, 30, 31] + (40..47).to_a + [50, 51] + (60..62).to_a
     sirens = numbers.map { |number| Explore.siren(number) }
     sirens.uniq.size.should eq(numbers.size)
     sirens.all? { |siren| siren.size == 9 && siren.starts_with?("998") && Explore.luhn?(siren) }.should be_true
@@ -412,6 +518,15 @@ describe "Exploration du stage de TELEDEC (optionnelle)" do
     Explore.with_regime(document, nil)["identity"]["fullRegimeFiscal"]?.should be_nil
     Explore.with_regime(document, "ISRN")["identity"]["fullRegimeFiscal"].as_s.should eq("ISRN")
     document["identity"]["fullRegimeFiscal"].as_s.should eq("ISRS") # document d'origine intact
+  end
+
+  it "n'ouvre jamais un lien hors du stage (production comprise), sans appel réseau" do
+    %w[https://www.teledec.fr/service/declaration/1 http://stage.teledec.fr/service/declaration/1
+      https://exemple.invalid/x].each do |url|
+      opened, detail = Explore.open_link(url)
+      opened.should be_false
+      detail.should contain("adresse hors du stage, non ouverte")
+    end
   end
 
   it "écrit un tableau expurgé dans un fichier à droits 0600" do
@@ -591,7 +706,7 @@ describe "Exploration du stage de TELEDEC (optionnelle)" do
       Sandbox.require_stage!
       Sandbox.account!
       credentials = Sandbox.credentials
-      base = (Teledec::HttpTransport::SCOPES - Teledec::HttpTransport::OPTIONAL_SCOPES).map { |scope| "stage/#{scope}" }
+      base = Explore.adapter_scopes
       granted = nil
       [{"J1 stage/nouvelle-declaration (avec les droits de l'adaptateur)", base + ["stage/nouvelle-declaration"]},
        {"J2 stage/nouvelle-declaration seul", ["stage/nouvelle-declaration"]},
@@ -599,7 +714,7 @@ describe "Exploration du stage de TELEDEC (optionnelle)" do
        {"J4 stage/nouvelle_declaration", base + ["stage/nouvelle_declaration"]},
        {"J5 stage/nouvelleDeclaration", base + ["stage/nouvelleDeclaration"]}].each do |(variant, scopes)|
         Explore.attempt("Jeton", variant) do
-          accepted, detail, token = Explore.token_probe(credentials, scopes)
+          accepted, detail, token, _ = Explore.token_probe(credentials, scopes)
           granted ||= token.try { |value| {value, scopes.last, variant[0, 2]} }
           {accepted.as(Bool?), detail}
         end
@@ -695,6 +810,123 @@ describe "Exploration du stage de TELEDEC (optionnelle)" do
           {found.as(Bool?), detail}
         end
       end
+    end
+
+    # --- Troisième série (D-TDC11-003) --------------------------------------------
+
+    it "8. Jetons : droits liste-declarations et mes-declarations, et jeton sans droit nommé" do
+      Sandbox.require_stage!
+      credentials = Sandbox.credentials
+      base = Explore.adapter_scopes
+      [{"T0 sans paramètre scope (tous les droits du partenaire)", [] of String},
+       {"T1 stage/liste-declarations (avec les droits de l'adaptateur)", base + ["stage/liste-declarations"]},
+       {"T2 stage/liste-declarations seul", ["stage/liste-declarations"]},
+       {"T3 stage/mes-declarations (avec les droits de l'adaptateur)", base + ["stage/mes-declarations"]},
+       {"T4 stage/mes-declarations seul", ["stage/mes-declarations"]}].each do |(variant, scopes)|
+        Explore.attempt("Jeton", variant) do
+          accepted, detail, _, _ = Explore.token_probe(credentials, scopes)
+          {accepted.as(Bool?), detail}
+        end
+      end
+    end
+
+    it "9. Liste : la DAS2 et la liasse déposées existent-elles, sous quels formulaire, dates et statut ?" do
+      Sandbox.require_stage!
+      Sandbox.account!
+      section = "Liste"
+      das2_siren, liasse_siren = Explore.siren(60), Explore.siren(61)
+      client = Explore.list_client(Sandbox.credentials(siret: Explore.siret(liasse_siren)))
+      unless client
+        Explore.attempt(section, "L1–L6") { {nil.as(Bool?), "droit liste-declarations refusé par le service des jetons"} }
+        next
+      end
+      das2_account = Explore.create_company(das2_siren, "ISRS")
+      liasse_account = Explore.create_company(liasse_siren, "ISRS")
+      deposited = {} of String => Bool
+      Explore.attempt(section, "L0 dépôt de la DAS2 (ISRS, régime dans l'identité)") do
+        response = client.post(Explore::WHITE_LABEL, Explore.das2_document(das2_siren, das2_account).to_json)
+        accepted, detail = Explore.white_label_outcome(response)
+        deposited["das2"] = accepted
+        {accepted.as(Bool?), detail}
+      end
+      Explore.attempt(section, "L0 dépôt de la liasse (creation-entreprise avant)") do
+        base = Sandbox.liasse_payload
+        payload = Teledec::Payload.new("liasse", base.forms, Explore.identity(liasse_siren), base.period_from,
+          base.period_to, 0, base.balance)
+        credentials = Sandbox.credentials(siret: Explore.siret(liasse_siren))
+        source = Sandbox.instance_setting("TELEDEC_SOURCE") || "API"
+        body = Teledec::Remote::Formats.liasse(payload, Explore.submission(payload), credentials, source, false, liasse_account)
+        response = client.post("/service/liasse", body, "text/plain; charset=utf-8")
+        accepted = response.ok? && !Teledec::Remote::Formats.redirect_url(response.body).empty?
+        deposited["liasse"] = accepted
+        {accepted.as(Bool?), accepted ? "liasse acceptée" : "HTTP #{response.status} : #{Explore.message(response)}"}
+      end
+      {"das2" => {das2_account, das2_siren, "DAS2"}, "liasse" => {liasse_account, liasse_siren, "liasse"}}.each do |kind, (account, siren, form)|
+        Explore.attempt(section, "L1 déclarations listées aussitôt (#{kind})") do
+          next {nil.as(Bool?), "dépôt #{kind} refusé : rien à lister"} unless deposited[kind]?
+          found, detail = Explore.declarations(client, account, siren)
+          {found.as(Bool?), detail}
+        end
+        Explore.attempt(section, "L2 suivi avec les valeurs listées (#{kind})") do
+          next {nil.as(Bool?), "dépôt #{kind} refusé : rien à suivre"} unless deposited[kind]?
+          items, detail = Explore.listed(client, account, siren)
+          next {false.as(Bool?), "liste refusée : #{detail}"} unless items
+          next {false.as(Bool?), "liste vide : aucune valeur à reprendre"} if items.empty?
+          probes = items.first(3).flat_map { |item| Explore.status_from_listed(client, account, siren, item, form) }
+          {probes.any?(&.[1]).as(Bool?), probes.map { |(what, found, answer)| "#{what} : #{found ? "trouvé" : "non trouvé"} — #{answer}" }.join(" ; ")}
+        end
+      end
+      sleep 30.seconds
+      {"das2" => {das2_account, das2_siren}, "liasse" => {liasse_account, liasse_siren}}.each do |kind, (account, siren)|
+        Explore.attempt(section, "L3 déclarations listées 30 s après (#{kind})") do
+          next {nil.as(Bool?), "dépôt #{kind} refusé : rien à lister"} unless deposited[kind]?
+          found, detail = Explore.declarations(client, account, siren)
+          {found.as(Bool?), detail}
+        end
+      end
+    end
+
+    it "10. Lien ouvert : la DAS2 n'existe-t-elle chez TELEDEC qu'une fois son lien ouvert ?" do
+      Sandbox.require_stage!
+      Sandbox.account!
+      section = "Lien ouvert"
+      siren = Explore.siren(62)
+      credentials = Sandbox.credentials(siret: Explore.siret(siren))
+      lister = Explore.list_client(credentials)
+      client = lister || Explore::Client.adapter(credentials)
+      account = Explore.create_company(siren, "ISRS")
+      params = {"email" => account, "siren" => siren, "date_fin" => "2025-12-31", "formulaire" => "DAS2"}
+      link = nil
+      Explore.attempt(section, "O0 dépôt de la DAS2 (ISRS, régime dans l'identité, lien demandé)") do
+        response = client.post(Explore::WHITE_LABEL, Explore.das2_document(siren, account).to_json)
+        accepted, detail = Explore.white_label_outcome(response)
+        link = (JSON.parse(response.body)["lien"]?.try(&.as_s?) rescue nil) if accepted
+        {accepted.as(Bool?), detail}
+      end
+      opened = link
+      unless opened
+        Explore.attempt(section, "O1–O4") { {nil.as(Bool?), "pas de lien rendu : rien à ouvrir"} }
+        next
+      end
+      look = ->(tag : String) do
+        Explore.attempt(section, "#{tag} suivi (paramètres de l'adaptateur)") do
+          found, detail = Explore.status_answer(client, params)
+          {found.as(Bool?), "#{found ? "trouvé" : "non trouvé"} — #{detail}"}
+        end
+        Explore.attempt(section, "#{tag} déclarations listées") do
+          next {nil.as(Bool?), "droit liste-declarations refusé : liste non interrogée"} unless lister
+          found, detail = Explore.declarations(lister, account, siren)
+          {found.as(Bool?), detail}
+        end
+      end
+      look.call("O1 avant l'ouverture :")
+      Explore.attempt(section, "O2 ouverture du lien (GET seuls, redirections suivies, rien cliqué)") do
+        accepted, detail = Explore.open_link(opened)
+        {accepted.as(Bool?), detail}
+      end
+      look.call("O3 aussitôt après l'ouverture :")
+      sleep 10.seconds
+      look.call("O4 10 s après l'ouverture :")
     end
   else
     pending "exploration désactivée (TELEDEC_EXPLORATION=1 et identifiants du stage requis)"

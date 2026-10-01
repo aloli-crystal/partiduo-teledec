@@ -27,8 +27,9 @@ module Teledec
     DAS2_NATURES = Config::DAS2_NATURES
 
     # États bruts d'un dépôt chez TELEDEC (normalisés en minuscules,
-    # `teledec.remote_statuses.*`) ; `notfound` : pas encore de déclaration
-    # chez TELEDEC.
+    # `teledec.remote_statuses.*`) ; `notfound` : le suivi ne trouve pas
+    # encore la déclaration (DAS2, liasse juste après le dépôt), en attente
+    # de finalisation chez TELEDEC depuis son lien (D-TDC11-002).
     REMOTE_STATUSES = %w[notfound notcompleted readytobesent sent completewitherrors completewithwarnings ok accepted
       erreur rejected]
 

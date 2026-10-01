@@ -246,17 +246,22 @@ module Teledec::SandboxSpec
   UNSETTLED = {"", "notfound", "notcompleted"}
 
   # État du dépôt une fois lu par TELEDEC (jusqu'à 30 s) ; échec si
-  # TELEDEC ne le trouve pas ou si ses contrôles signalent
-  # `CompleteWithErrors`, avec les libellés de ses erreurs (expurgés).
+  # ses contrôles signalent `CompleteWithErrors`, avec les libellés de ses
+  # erreurs (expurgés), ou si TELEDEC ne le trouve pas — sauf `awaiting` :
+  # un dépôt introuvable juste après l'envoi est alors en attente de
+  # finalisation chez TELEDEC depuis son lien (DAS2, liasse : D-TDC11-002),
+  # comme l'adaptateur le traite en production.
   def self.settled_status!(recorder : Recorder, transport : HttpTransport, credentials : Credentials,
-                           remote_id : String, what : String) : RemoteStatus
+                           remote_id : String, what : String, awaiting : Bool = false) : RemoteStatus
     status = status!(transport, credentials, remote_id, what)
     6.times do
       break unless UNSETTLED.includes?(status.remote_status)
       sleep 5.seconds
       status = status!(transport, credentials, remote_id, what)
     end
-    fail "#{what} : TELEDEC ne trouve pas le dépôt (declaration-status)" if status.remote_status == "notfound"
+    if status.remote_status == "notfound" && !awaiting
+      fail "#{what} : TELEDEC ne trouve pas le dépôt (declaration-status)"
+    end
     if status.remote_status == "completewitherrors"
       fail "#{what} : contrôles de TELEDEC en erreur (CompleteWithErrors) — #{errors(recorder, transport, credentials, remote_id)}"
     end
@@ -345,7 +350,7 @@ module Teledec::SandboxSpec
 
   # DAS2 de 2025, seule (formulaire principal) au millésime de sa campagne,
   # 2026 (D-TDC6-001), entreprise à l'IS réel simplifié dont le régime
-  # (`ISRS`) part dans l'identité (D-TDC10-002) : une société (raison sociale et SIRET) payée de deux
+  # (`ISRS`) part dans l'identité, comme tout régime (D-TDC11-001) : une société (raison sociale et SIRET) payée de deux
   # natures (honoraires et commissions : sous-tableau
   # `repetitionDAS2MontantSommesVersees`), une personne physique (nom,
   # prénoms, date de naissance) payée de droits d'auteur.

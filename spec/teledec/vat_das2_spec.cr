@@ -107,15 +107,16 @@ describe "DAS2 (honoraires, depuis les fiches fournisseurs et les écritures)" d
     S.prepare("das2", year: 2026).errors.map(&.key).should eq(["teledec.controls.das2_address"])
   end
 
-  it "bloque dès la préparation une DAS2 que TELEDEC n'accepte pas seule (régime absent ou autre que l'IS réel simplifié)" do
+  it "bloque dès la préparation une DAS2 sans régime d'imposition, accepte tous les régimes" do
     S.books
     S.fees(S.supplier("Cabinet Durand"), "1500")
     S.prepare("das2", year: 2026).errors.should be_empty
-    Api.update_settings(S::SYSTEM, Api::SettingsInput.new("is_rn", "ca3_monthly")).value!
-    error = S.prepare("das2", year: 2026).errors.find! { |control| control.key == "teledec.controls.das2_alone" }
-    error.params["regime"].should eq("ISRN")
-    Api.update_settings(S::SYSTEM, Api::SettingsInput.new("bic_rn", "ca3_monthly")).value!
-    S.prepare("das2", year: 2026).errors.map(&.key).should eq(["teledec.controls.das2_alone_unlisted"])
+    # Tout régime convient : il part dans l'identité de la DAS2
+    # (D-TDC11-001).
+    %w[is_rn bic_rn].each do |system|
+      Api.update_settings(S::SYSTEM, Api::SettingsInput.new(system, "ca3_monthly")).value!
+      S.prepare("das2", year: 2026).errors.should be_empty
+    end
     Api.update_settings(S::SYSTEM, Api::SettingsInput.new("", "ca3_monthly")).value!
     S.prepare("das2", year: 2026).errors.map(&.key).should eq(["teledec.controls.das2_tax_system"])
   end

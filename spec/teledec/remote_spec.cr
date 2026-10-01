@@ -213,7 +213,7 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     Api.refresh(S.admin, advance.id).value!.status.should eq("acknowledged")
   end
 
-  it "refuse, comme le stage, un dépôt sans formulaire principal à son millésime (DAS2 au millésime 2025)" do
+  it "refuse, comme le stage, un dépôt sans formulaire principal (DAS2 au millésime 2025, ou sans régime dans l'identité)" do
     S.books
     server = S.teledec.server
     basic = Base64.strict_encode("#{Teledec::SimulatedTeledec::LOGIN}:#{Teledec::SimulatedTeledec::API_KEY}")
@@ -224,7 +224,7 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
     das2 = {"repetitionDAS2TV" => [{"AF_3036_1" => "Cabinet Durand",
                                     "repetitionDAS2MontantSommesVersees" => [{"CA" => "H", "BA" => 1212}]}]}
     document = {"auth" => {"email" => Teledec::SimulatedTeledec::ACCOUNT, "timestamp" => stamp},
-                "identity" => {"siret" => Teledec::SimulatedTeledec::SIRET},
+                "identity" => {"siret" => Teledec::SimulatedTeledec::SIRET, "fullRegimeFiscal" => "ISRS"},
                 "period" => {"begin" => "2025-01-01", "end" => "2025-12-31", "millesime" => 2025}, "DAS2" => das2}
     url = "https://stage.teledec.fr/service/declaration-marque-blanche"
     alone = server.call(Teledec::Remote::Request.new("POST", url, bearer, document.to_json))
@@ -235,7 +235,16 @@ describe "Adaptateur de l'API partenaire de TELEDEC (contre le TELEDEC simulé)"
       "l'entreprise n'est pas présent, veuillez en saisir un dans votre payload. ISRN : 3310CA3, 3514, 3519…")
     S.teledec.deposits.should be_empty
     campaign = document.merge({"period" => {"begin" => "2025-01-01", "end" => "2025-12-31", "millesime" => 2026}})
-    server.call(Teledec::Remote::Request.new("POST", url, bearer, campaign.to_json)).status.should eq(200)
+    # Sans régime dans l'identité, la DAS2 seule est refusée ; avec lui,
+    # acceptée quel que soit le régime (D-TDC11-001).
+    [{} of String => String, {"fullRegimeFiscal" => "INCONNU"}].each do |extra|
+      unknown = campaign.merge({"identity" => {"siret" => Teledec::SimulatedTeledec::SIRET}.merge(extra)})
+      refused = server.call(Teledec::Remote::Request.new("POST", url, bearer, unknown.to_json))
+      {refused.status, JSON.parse(refused.body)["message"].as_s[0, 20]}.should eq({400, "aucun formulaire de "})
+    end
+    S.teledec.deposits.should be_empty
+    bnc = campaign.merge({"identity" => {"siret" => Teledec::SimulatedTeledec::SIRET, "fullRegimeFiscal" => "BNCDC"}})
+    server.call(Teledec::Remote::Request.new("POST", url, bearer, bnc.to_json)).status.should eq(200)
     S.teledec.deposits.keys.should eq(["DAS2:732829320:2025-12-31"])
   end
 

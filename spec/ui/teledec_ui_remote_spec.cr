@@ -83,6 +83,32 @@ describe "Écrans de l'adaptateur réel de TELEDEC" do
     html.should contain(%(rel="noopener noreferrer"))
   end
 
+  it "montre une DAS2 que le suivi ne trouve pas encore comme en attente de finalisation chez TELEDEC, sans erreur, jusqu'à l'ouverture de son lien" do
+    browser = signed_in
+    S.connect
+    # Comme sur le stage : suivi en 404 juste après le dépôt (D-TDC11-002).
+    S.teledec.hidden_until_opened << "DAS2"
+    S.fees(S.supplier("Cabinet Durand"), "1500")
+    filing = S.prepare("das2", year: 2026)
+    url = "/ext/TELEDEC/filings/#{filing.id}"
+    browser.post("#{url}/transmit").status.should eq(302)
+    browser.post("#{url}/refresh").status.should eq(302)
+    view = Teledec::Api.filing(S.admin, filing.id)
+    {view.status, view.remote_status, view.last_error}.should eq({"transmitted", "notfound", ""})
+    html = browser.get(url).html
+    html.should contain(%(data-teledec-remote-status="notfound"))
+    html.should contain("En attente de finalisation chez TELEDEC")
+    html.should contain("data-teledec-awaiting")
+    html.should contain("data-teledec-open")
+    html.should contain("data-teledec-refresh")
+    # Lien ouvert : le suivi trouve la déclaration.
+    S.teledec.open_link(view.remote_id)
+    Teledec::Api.refresh(S.admin, filing.id).value!.remote_status.should eq("readytobesent")
+    html = browser.get(url).html
+    html.should contain(%(data-teledec-remote-status="readytobesent"))
+    html.should_not contain("data-teledec-awaiting")
+  end
+
   it "n'ouvre pas une adresse de TELEDEC qui n'est pas en https" do
     browser = signed_in
     S.connect

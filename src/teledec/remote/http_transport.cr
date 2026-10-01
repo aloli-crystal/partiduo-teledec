@@ -173,6 +173,11 @@ module Teledec
         key.echeance.try { |day| form.add "date_echeance", day }
       end
       response = call(credentials, "GET", "/service/declaration-status?#{params}", allow: [404])
+      # Dépôt pas encore trouvé (404) : jamais une erreur. Sur le stage, une
+      # DAS2 ou une liasse acceptée reste introuvable par le suivi juste
+      # après le dépôt, quels que soient le délai et les paramètres
+      # (D-TDC11-002) : en attente de finalisation chez TELEDEC, depuis son
+      # lien ; le suivi la relira plus tard.
       return RemoteStatus.new("pending", remote_status: "notfound") if response.status == 404
       answer = parse_object(response.body)
       raw = answer["status"]?.try { |value| value.as_s? || value.raw.to_s } || ""

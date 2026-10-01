@@ -10,9 +10,10 @@ module Teledec
   # jeton OAuth2 (`Basic`, scopes, expiration, 401), API Balance
   # (identification `#CLE valeur`, balance à huit colonnes, source
   # reconnue, URL rendue), marque blanche (horodatage de moins d'une heure,
-  # lien rendu, formulaire principal du régime exigé à son millésime), suivi
-  # (`declaration-status`, comptes-rendus, 404 sans déclaration, compte
-  # inconnu), création d'entreprise (mot de passe bcrypt ; seule à créer le
+  # lien rendu, formulaire principal du régime exigé à son millésime, DAS2
+  # seule avec le régime dans l'identité), suivi (`declaration-status`,
+  # comptes-rendus, 404 sans déclaration ou, à la demande, avant
+  # l'ouverture du lien, compte inconnu), création d'entreprise (mot de passe bcrypt ; seule à créer le
   # compte), amorce du dépôt au greffe (`nouvelle-declaration`, droit du
   # jeton exigé, adresse de redirection rendue), PDF du dépôt finalisé
   # (`declarationPdf`, jeton de `lienPdf`) et corps des rappels. Aucun appel réseau. Domaine des comptes en marque
@@ -38,7 +39,7 @@ module Teledec
     end
 
     delegate deposits, failure, acknowledge, reject, reject_with_errors, callback_body, expire_tokens!,
-      token_requests, requests, accounts, finalize_greffe, refused_scopes, to: @server
+      token_requests, requests, accounts, finalize_greffe, refused_scopes, hidden_until_opened, open_link, to: @server
 
     def failure=(reason : String?) : String?
       @server.failure = reason
@@ -58,7 +59,10 @@ module Teledec
       # marque blanche sans aucun d'eux est refusé, avec le message du
       # stage. Un formulaire ne compte qu'à partir de son premier millésime
       # (`FIRST_MILLESIMES`) : le stage a refusé ainsi une DAS2 envoyée au
-      # millésime 2025, qui n'a pas de DAS2 (DECISIONS D-TDC6-001).
+      # millésime 2025, qui n'a pas de DAS2 (DECISIONS D-TDC6-001). La DAS2
+      # seule ne compte qu'avec le régime de l'entreprise dans l'identité
+      # (`fullRegimeFiscal`, régime connu de TELEDEC) : le stage la refuse
+      # sans lui et l'accepte avec, pour tous les régimes (D-TDC11-001).
       REGIME_FORMS = %w[3310CA3 3517SCA12 3514 2571 2572 3519 DAS2 2072S 2031 2035 2036 1329AC 1329DEF 2065 2257
         2258]
       FIRST_MILLESIMES = {"DAS2" => 2026}
@@ -111,6 +115,12 @@ module Teledec
       # `false` : le suivi ne joint pas les comptes-rendus (l'adaptateur les
       # relève par `/service/recuperation-liste-compterendus`).
       property? reports_in_status : Bool = true
+      # Formulaires dont le suivi ne trouve le dépôt (404) qu'une fois son
+      # lien ouvert (`open_link`) : ce que montre le stage pour la DAS2 et
+      # la liasse juste après le dépôt (D-TDC11-002). Vide par défaut.
+      getter hidden_until_opened = Set(String).new
+      # Dépôts dont le lien a été ouvert.
+      getter opened = Set(String).new
       @tokens = {} of String => Token
       @next_id = 285_900_i64
 
@@ -136,6 +146,12 @@ module Teledec
             text(404, "Not Found")
           end
         end
+      end
+
+      # Lien du dépôt ouvert par l'utilisateur : le suivi le trouve.
+      def open_link(remote_id : String) : Nil
+        opened << remote_id
+        nil
       end
 
       # Tous les jetons délivrés expirent (le suivant répondra 401).
@@ -297,7 +313,7 @@ module Teledec
         period = document["period"]?.try(&.as_h?) || return json(400, {"message" => "period absent"})
         form = (Remote::Formats::FORM_KEYS.values - ["liasse"]).find { |name| document.has_key?(name) } ||
                return json(400, {"message" => "formulaire absent"})
-        return json(400, {"message" => NO_REGIME_FORM}) unless regime_form?(document, period)
+        return json(400, {"message" => NO_REGIME_FORM}) unless regime_form?(document, identity, period)
         if form == "DAS2" && (invalid = das2_invalid(document["DAS2"]))
           return json(400, {"message" => invalid})
         end
@@ -354,6 +370,9 @@ module Teledec
         deposit = lookup(params["formulaire"]?, params["siren"]?, params["date_fin"]?, params["date_echeance"]?)
         return text(400, UNKNOWN_USER) if deposit && deposit.email != params["email"]?
         return json(404, {"message" => "declaration not found", "status" => "ERREUR"}) unless deposit
+        if hidden_until_opened.includes?(deposit.form) && !opened.includes?(deposit.remote_id)
+          return json(404, {"message" => "declaration not found", "status" => "ERREUR"})
+        end
         answer = {"status" => JSON::Any.new(deposit.status)}
         deposit.pdf_link.try { |link| answer["lienPdf"] = JSON::Any.new(link) }
         if reports_in_status?
@@ -382,10 +401,16 @@ module Teledec
       # --- Outils -----------------------------------------------------------------
 
       # Le document porte-t-il un formulaire principal, à un millésime où il
-      # existe (`FIRST_MILLESIMES`) ?
-      private def regime_form?(document : Hash(String, JSON::Any), period : Hash(String, JSON::Any)) : Bool
+      # existe (`FIRST_MILLESIMES`) ? La DAS2 n'en est un qu'avec le régime
+      # de l'entreprise dans l'identité.
+      private def regime_form?(document : Hash(String, JSON::Any), identity : Hash(String, JSON::Any),
+                               period : Hash(String, JSON::Any)) : Bool
         millesime = period["millesime"]?.try(&.as_i?) || 9999
-        REGIME_FORMS.any? { |name| document.has_key?(name) && millesime >= FIRST_MILLESIMES.fetch(name, 0) }
+        regime = identity["fullRegimeFiscal"]?.try(&.as_s?)
+        REGIME_FORMS.any? do |name|
+          next false unless document.has_key?(name) && millesime >= FIRST_MILLESIMES.fetch(name, 0)
+          name != "DAS2" || Remote::Formats::KNOWN_REGIMES.includes?(regime.to_s)
+        end
       end
 
       # DAS2 : un objet `repetitionDAS2TV` par bénéficiaire, natures dans

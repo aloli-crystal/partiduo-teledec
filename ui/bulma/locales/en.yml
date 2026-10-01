@@ -50,6 +50,7 @@ en:
       none: "No return prepared for this financial year."
     filing:
       remote_status: "State at TELEDEC"
+      awaiting: "TELEDEC does not find this return yet: open it at TELEDEC (button below) to complete it, then refresh the status later."
       summary: "Return"
       company: "Company"
       prepared_at: "Prepared on"

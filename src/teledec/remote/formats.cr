@@ -169,9 +169,10 @@ module Teledec
       # payload Balance. Gardé à la création : l'entreprise créée avant un
       # dépôt porte d'emblée son vrai régime, et pas un régime faux jusqu'à
       # sa première liasse (D-TDC5-002, D-TDC6-005, D-TDC9-005). Dans
-      # l'identité d'une déclaration en marque blanche, pour la DAS2 seule :
-      # sans lui, le stage refuse une DAS2 déposée seule, faute de formulaire
-      # identifiant le régime (D-TDC10-002) ; les autres déclarations le
+      # l'identité d'une déclaration en marque blanche, pour la DAS2 seule,
+      # quel que soit le régime : sans lui, le stage refuse une DAS2 déposée
+      # seule ; avec lui, il l'accepte pour tous les régimes essayés (ISRS,
+      # ISRN, BICRS, BICRN, BNCDC : D-TDC11-001). Les autres déclarations le
       # laissent à TELEDEC, qui le déduit de leurs formulaires.
       # Valeurs de la liste de référence de TELEDEC (« Liste régimes
       # fiscaux », base de connaissances partenaires) : le BNC s'écrit
@@ -181,24 +182,6 @@ module Teledec
         "is_rsi" => "ISRS", "is_rn" => "ISRN", "bic_rsi" => "BICRS", "bic_rn" => "BICRN", "bnc" => "BNCDC",
         "sci" => "RF72S",
       }
-
-      # Formulaires principaux de chaque régime fiscal, tels que TELEDEC les
-      # énumère en refusant une DAS2 déposée seule sur le stage
-      # (exploration du 1er octobre 2026, D-TDC10-001) ; le relevé d'IS
-      # (2571, 2572) est principal pour les régimes à l'IS.
-      PRINCIPAL_FORMS = {
-        "ISRN"  => "3310CA3, 3514, 3519, 2065 + 2050, 2257, 2258, 2571, 2572",
-        "ISRS"  => "3517SCA12, DAS2, 2065, 2571, 2572",
-        "BICRS" => "2031",
-        "BNCDC" => "2035",
-        "BICMS" => "2036",
-      }
-
-      # Régimes où la DAS2 est un formulaire principal, déposée seule avec
-      # le régime de l'entreprise dans son identité (`fullRegimeFiscal`) :
-      # l'IS réel simplifié seul, d'après la même liste et l'exploration
-      # du stage (D-TDC10-002).
-      DAS2_ALONE_REGIMES = Set{"ISRS"}
 
       # Liste complète des régimes fiscaux admis par TELEDEC.
       KNOWN_REGIMES = Set{"ISRS", "ISRN", "BICRS", "BICRN", "BABS", "BABN", "BICMN", "BICMS", "BNCDC", "RF72S", "RF72C",
@@ -574,21 +557,15 @@ module Teledec
       end
 
       # Régime fiscal de TELEDEC d'une DAS2 déposée seule : celui de
-      # l'entreprise, s'il en fait un formulaire principal
-      # (`DAS2_ALONE_REGIMES`). Sinon refus local, avant tout envoi :
-      # régime inconnu (`das2_tax_system`), ou DAS2 à déposer avec un
-      # formulaire principal du régime (`das2_alone`, `das2_alone_unlisted`
-      # si TELEDEC ne l'a pas nommé). Jamais de déclaration néant ajoutée
-      # pour accompagner la DAS2 : ce serait une fausse déclaration
-      # (D-TDC10-002).
+      # l'entreprise, quel qu'il soit, porté dans l'identité
+      # (`fullRegimeFiscal`) ; TELEDEC accepte alors la DAS2 seule pour tous
+      # les régimes (exploration du stage, D-TDC11-001). Régime inconnu :
+      # refus local, avant tout envoi (`das2_tax_system`), puisque TELEDEC
+      # refuse la DAS2 seule sans régime. Jamais de déclaration néant
+      # ajoutée pour accompagner la DAS2 : ce serait une fausse déclaration.
       def self.das2_regime(payload : Payload) : String
-        regime = tax_system(payload).try { |system| FULL_REGIMES[system]? } ||
-                 raise TransportError.new("teledec.errors.transport.das2_tax_system")
-        return regime if DAS2_ALONE_REGIMES.includes?(regime)
-        if forms = PRINCIPAL_FORMS[regime]?
-          raise TransportError.new("teledec.errors.transport.das2_alone", {"regime" => regime, "forms" => forms})
-        end
-        raise TransportError.new("teledec.errors.transport.das2_alone_unlisted", {"regime" => regime})
+        tax_system(payload).try { |system| FULL_REGIMES[system]? } ||
+          raise TransportError.new("teledec.errors.transport.das2_tax_system")
       end
 
       # Régime d'imposition du dossier : celui noté dans le document

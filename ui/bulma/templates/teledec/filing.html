@@ -20,7 +20,7 @@
       {% if details %}{% for detail in details %}<dt>{{ detail.label }}</dt><dd>{{ detail.value }}</dd>{% endfor %}{% endif %}
       <dt>{% translate "teledec_ui.filing.prepared_at" %}</dt><dd>{{ filing.prepared_at }}</dd>
       {% if filing.transmitted_at %}<dt>{% translate "teledec_ui.filing.transmitted_at" %}</dt><dd>{{ filing.transmitted_at }}{% if filing.remote_id %} · <span class="pd-mono" data-teledec-remote>{{ filing.remote_id }}</span>{% endif %}</dd>{% endif %}
-      {% if filing.remote_status %}<dt>{% translate "teledec_ui.filing.remote_status" %}</dt><dd data-teledec-remote-status="{{ filing.remote_status_code }}">{{ filing.remote_status }}</dd>{% endif %}
+      {% if filing.remote_status %}<dt>{% translate "teledec_ui.filing.remote_status" %}</dt><dd data-teledec-remote-status="{{ filing.remote_status_code }}">{{ filing.remote_status }}{% if filing.awaiting %}<p class="help" data-teledec-awaiting>{% translate "teledec_ui.filing.awaiting" %}</p>{% endif %}</dd>{% endif %}
       {% if filing.acknowledged %}<dt>{% translate "teledec_ui.filing.acknowledged_at" %}</dt><dd>{{ filing.acknowledged }}</dd>{% endif %}
       {% if filing.rejected_at %}<dt>{% translate "teledec_ui.filing.rejected_at" %}</dt><dd>{{ filing.rejected_at }}</dd>{% endif %}
       <dt>{% translate "teledec_ui.filing.fingerprint" %}</dt><dd class="pd-mono is-size-7">{{ filing.fingerprint }}</dd>

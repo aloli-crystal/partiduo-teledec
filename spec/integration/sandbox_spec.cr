@@ -68,7 +68,8 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       # Document vérifié avant tout appel : DAS2 seule, millésime de la
       # campagne 2026 (le stage refusait le millésime 2025, D-TDC6-001),
       # régime de l'entreprise dans l'identité (sans lui, le stage refuse
-      # la DAS2 seule, D-TDC10-002).
+      # la DAS2 seule ; avec lui, il l'accepte pour tous les régimes,
+      # D-TDC11-001).
       document = JSON.parse(Teledec::Remote::Formats.white_label(Sandbox.das2_payload, Sandbox.submission(Sandbox.das2_payload, due_on: due_on),
         Teledec::Credentials.new("x", "y", "sandbox", Sandbox::EMAIL, Sandbox::SIRET), Time.utc, "compte@exemple.org"))
       (document.as_h.keys - %w[auth identity period]).should eq(["DAS2"])
@@ -82,7 +83,11 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       submitted = Sandbox.deposit!(transport, credentials, Sandbox.submission(Sandbox.das2_payload, due_on: due_on), "DAS2")
       Sandbox.expect_link!(submitted, "https://stage.teledec.fr/", "Lien")
       submitted.remote_id.should eq("DAS2:#{Sandbox::SIREN}:2025-12-31")
-      status = Sandbox.settled_status!(recorder, transport, credentials, submitted.remote_id, "DAS2")
+      # Le suivi ne trouve pas la DAS2 juste après le dépôt (404, tous
+      # délais et paramètres essayés, D-TDC11-002) : en attente de
+      # finalisation chez TELEDEC, jamais une erreur ; s'il la trouve, ses
+      # contrôles ne doivent pas être en erreur.
+      status = Sandbox.settled_status!(recorder, transport, credentials, submitted.remote_id, "DAS2", awaiting: true)
       status.state.should eq("pending")
       status.remote_status.should_not be_empty
     end
