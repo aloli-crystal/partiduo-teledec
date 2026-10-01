@@ -47,7 +47,14 @@ entiers.
 écritures des comptes paramétrés et les fiches fournisseurs ; seuil de
 1 200 € ; montants toutes taxes comprises. Fournisseur « personne
 physique » (nature de la fiche) déclaré par ses nom, prénoms et date de
-naissance, les autres en raison sociale.
+naissance, les autres en raison sociale. Déposée *seule*, avec le régime
+de l'entreprise dans son identité (`fullRegimeFiscal`) : TELEDEC ne
+l'accepte ainsi qu'à l'IS réel simplifié (`ISRS`, vérifié sur le stage).
+Pour un autre régime, ou sans régime choisi, contrôle bloquant dès la
+préparation et refus traduit avant tout envoi (« DAS2 seule non acceptée
+par TELEDEC pour le régime X : à déposer avec … », formulaires principaux
+du régime selon TELEDEC) : la DAS2 se dépose alors sur le site de TELEDEC.
+Jamais de déclaration vide ou « néant » ajoutée pour l'accompagner.
 
 |Relevés d'IS
 |Acomptes (2571, quatre par exercice) et solde (2572, acomptes transmis
@@ -72,7 +79,7 @@ document intangible une fois transmis (déclencheur PostgreSQL).
 `Teledec::HttpTransport` (API partenaire de TELEDEC) : jeton OAuth2
 `client_credentials` en cache, liasse par l'API Balance (URL de la liasse
 rendue à l'utilisateur), TVA CA3 et CA12 (sans millésime : TELEDEC le
-déduit de la fin de période), DAS2 (seule : formulaire principal), relevés
+déduit de la fin de période), DAS2 (seule, régime ISRS dans l'identité), relevés
 2571 et 2572 par l'API marque blanche, au millésime de leur campagne ;
 amorce du dépôt au greffe (`nouvelle-declaration`) et relevé de son PDF
 signé ; validation locale facultative de chaque document par les schémas
@@ -287,7 +294,7 @@ haché de son mot de passe : la suite les vérifie sans les afficher.
 |Entreprise de test |`creation-entreprise` rattache l'entreprise fictive (SIREN `999888779`, IS `ISRS`) à son compte en marque blanche.
 |Liasse |Balance de démonstration acceptée par l'API Balance (source `API`), URL rendue, état lu.
 |CA3 |Dépôt en marque blanche, lien rendu, état `readytobesent`.
-|DAS2 |DAS2 de 2025 *seule* (formulaire principal), au millésime 2026 (vérifié avant l'appel) ; deux bénéficiaires — une société (`AF_3036_1`, `AF_3039_1`) payée de deux natures (sous-tableau `repetitionDAS2MontantSommesVersees`), une personne physique (`AE_3036_1`, `AE_3036_2`, `AI`) — ; lien, identifiant de suivi, état lu. Échoue si les contrôles de TELEDEC signalent `CompleteWithErrors`, avec les libellés d'erreur rendus par TELEDEC.
+|DAS2 |DAS2 de 2025 *seule* (formulaire principal), au millésime 2026, régime `ISRS` dans l'identité (vérifiés avant l'appel) ; deux bénéficiaires — une société (`AF_3036_1`, `AF_3039_1`) payée de deux natures (sous-tableau `repetitionDAS2MontantSommesVersees`), une personne physique (`AE_3036_1`, `AE_3036_2`, `AI`) — ; lien, identifiant de suivi, état lu. Échoue si les contrôles de TELEDEC signalent `CompleteWithErrors`, avec les libellés d'erreur rendus par TELEDEC.
 |Relevé 2571 |Quatrième acompte d'IS de l'exercice 2026 (régime de l'entreprise de test remis à `ISRS` avant le dépôt) ; lien, identifiant, état ; même contrôle `CompleteWithErrors`.
 |2035 sans balance |2035 construite par l'extension dans la base de test avec le module `liberal` seul (régime BNC, exercice 2025, aucune ligne de balance), déposée pour une *seconde* entreprise fictive (SIREN `999888662`, compte distinct, créé par l'adaptateur au régime `BNC` avant la liasse). Avant l'appel, le corps est vérifié : aucune section de balance, section JSON dans la forme documentée (plusieurs lignes, blocs `zones_formulaires` et `informations_supplementaires`, D-TDC7-001). URL rendue, état lu. Un refus de TELEDEC, au dépôt comme au suivi, fait échouer l'exemple avec son message et la route qui a refusé (`/service/creation-entreprise` ou `/service/liasse`).
 |Greffe |Amorce `nouvelle-declaration` pour l'entreprise de test (SAS) : corps vérifié avant l'appel, adresse de redirection rendue (vérifiée sans être affichée), dépôt jamais finalisé. En attente si le jeton du stage ne porte pas encore le droit `nouvelle-declaration`.
@@ -356,7 +363,15 @@ l'entreprise à sa création, millésime, régime dans la payload, période
 réduite, CA3 déposée avant ou jointe, bloc minimal), *greffe* (amorce
 `nouvelle-declaration`, du corps minimal au corps complet, jamais
 finalisée) et *liasse* (`#CREATION-AUTO OUI` sans `creation-entreprise`,
-avec un témoin). Rien ne part à la DGFiP (lien sans envoi, liasse sans
+avec un témoin). Deuxième série : *DAS2 hors ISRS* (régime `ISRN`,
+`BICRS`, `BICRN`, `BNCDC` dans la payload, entreprise créée au même
+régime), *création BICRS* (cause du « Misformatted JSON » : forme en clair
+ou codée, omise, sans régime de TVA, témoins), *jeton du greffe* (noms du
+droit `nouvelle-declaration` présentés au service des jetons, réponse
+affichée sans le jeton, puis amorces avec le premier nom accordé) et
+*suivi* (dépôts acceptés relus après 0, 10, 30 et 60 s, puis avec des
+variantes de paramètres, et déclarations listées par TELEDEC : délai ou
+paramètres faux ?). Rien ne part à la DGFiP (lien sans envoi, liasse sans
 bouton « Envoyer », greffe amorcé seulement). Chaque variante a sa propre
 entreprise fictive (SIREN à clé valide `998<série><n°>` ; série
 `TELEDEC_EXPLORATION_SERIE`, sinon tirée de l'heure). Activée seulement avec

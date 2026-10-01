@@ -197,7 +197,7 @@ describe "Documents de l'adaptateur réel contre les schémas officiels de TELED
     SchemaSpec.expect_valid(store, solde.call(2024, "3000"), SchemaSpec.submission("is_2572", "2025-05-15"), "2572-2025")
 
     das2 = Payload.new("das2", %w[DAS2], SchemaSpec.identity, "2025-01-01", "2025-12-31", das2: SchemaSpec.das2_lines,
-      details: {"threshold" => "1200"})
+      details: {"threshold" => "1200", "tax_system" => "is_rsi"})
     SchemaSpec.expect_valid(store, das2, SchemaSpec.submission("das2", "2026-05-05"), "DAS2-2026")
   end
 

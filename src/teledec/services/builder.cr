@@ -244,8 +244,10 @@ module Teledec
 
     # Le régime d'imposition, s'il est choisi, est noté dans le document
     # (`tax_system`) : l'entreprise créée chez TELEDEC avant ce premier
-    # dépôt porte alors son vrai régime (D-TDC5-002). La DAS2 part seule
-    # (formulaire principal) : le régime n'est plus exigé (D-TDC6-001).
+    # dépôt porte alors son vrai régime (D-TDC5-002), et la DAS2, déposée
+    # seule, le porte dans son identité (D-TDC10-002). TELEDEC n'accepte la
+    # DAS2 seule qu'à l'IS réel simplifié : régime absent ou autre, contrôle
+    # bloquant dès la préparation (`das2_regime_control`).
     private def self.das2(input, company, settings, tax_system) : Partiduo::Api::Result(Built)
       year = input.year || return Partiduo::Api::Result(Built).failure(FieldError.new("year", "teledec.errors.year.blank"))
       unless YEARS.includes?(year)
@@ -288,8 +290,18 @@ module Teledec
       details = {"threshold" => Money.euros_text(settings.das2_threshold || Config::DAS2_THRESHOLD)}
       details["tax_system"] = tax_system unless tax_system.empty?
       payload = Payload.new("das2", forms, identity(company), day(starts_on), day(ends_on), 0, nil, nil, nil, lines, details)
+      das2_regime_control(payload).try { |control| controls << control }
       Partiduo::Api::Result(Built).success(Built.new("das2:#{year}", "das2", forms, fiscal_year_for(ends_on).try(&.id),
         year, 0, starts_on, ends_on, Calendar.das2(year), nil, payload, controls))
+    end
+
+    # Refus local d'une DAS2 que TELEDEC n'accepterait pas seule
+    # (`Remote::Formats.das2_regime`), en contrôle bloquant de même texte.
+    private def self.das2_regime_control(payload : Payload) : ControlView?
+      Remote::Formats.das2_regime(payload)
+      nil
+    rescue ex : TransportError
+      error(ex.key.sub("teledec.errors.transport.", "teledec.controls."), ex.params)
     end
 
     # Avertissements sur l'identité d'un bénéficiaire : nature du

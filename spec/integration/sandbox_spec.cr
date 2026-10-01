@@ -63,15 +63,17 @@ describe "Stage de TELEDEC (intégration, optionnelle)" do
       status.remote_status.should eq("readytobesent")
     end
 
-    it "dépose une DAS2 seule, au millésime 2026, en marque blanche (société à deux natures, personne physique) sans erreur bloquante de TELEDEC" do
+    it "dépose une DAS2 seule, au millésime 2026, régime ISRS dans l'identité, en marque blanche (société à deux natures, personne physique) sans erreur bloquante de TELEDEC" do
       due_on = Teledec::Calendar.das2(2025).to_s("%F")
       # Document vérifié avant tout appel : DAS2 seule, millésime de la
-      # campagne 2026 (le stage refusait le millésime 2025, D-TDC6-001).
+      # campagne 2026 (le stage refusait le millésime 2025, D-TDC6-001),
+      # régime de l'entreprise dans l'identité (sans lui, le stage refuse
+      # la DAS2 seule, D-TDC10-002).
       document = JSON.parse(Teledec::Remote::Formats.white_label(Sandbox.das2_payload, Sandbox.submission(Sandbox.das2_payload, due_on: due_on),
         Teledec::Credentials.new("x", "y", "sandbox", Sandbox::EMAIL, Sandbox::SIRET), Time.utc, "compte@exemple.org"))
       (document.as_h.keys - %w[auth identity period]).should eq(["DAS2"])
       document["period"]["millesime"].as_i.should eq(2026)
-      document["identity"]["fullRegimeFiscal"]?.should be_nil
+      document["identity"]["fullRegimeFiscal"].as_s.should eq("ISRS")
       Sandbox.require_stage!
       Sandbox.account!
       recorder = Sandbox::Recorder.new

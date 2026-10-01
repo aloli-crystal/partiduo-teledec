@@ -17,6 +17,19 @@ require "../spec_helper"
 # 3. *Liasse et `#CREATION-AUTO`* : la création automatique suffit-elle,
 #    sans `creation-entreprise` préalable (D-TDC9-004) ?
 #
+# Deuxième série (D-TDC10-003), après la première exploration :
+#
+# 4. *DAS2 hors ISRS* : le régime dans la payload (`ISRN`, `BICRS`,
+#    `BICRN`, `BNCDC`, entreprise créée au même régime) suffit-il ?
+# 5. *BICRS* : cause du « Misformatted JSON » de D6, création seule
+#    (forme en clair ou codée, omise, sans régime de TVA ; témoins).
+# 6. *Jeton du greffe* : noms possibles du droit `nouvelle-declaration`,
+#    réponse du service des jetons (sans le jeton) ; amorces G1 à G5 avec
+#    le premier nom accordé.
+# 7. *Suivi* : un dépôt accepté (DAS2, liasse) relu après 0, 10, 30 et
+#    60 s, puis avec des variantes de paramètres, et la liste des
+#    déclarations de l'entreprise : délai ou paramètres faux ?
+#
 # Activée seulement si `~/.config/partiduo/teledec-sandbox.env` porte les
 # identifiants du stage *et* si `TELEDEC_EXPLORATION=1` ; exige aussi le
 # domaine du partenaire (`TELEDEC_USER_DOMAIN`). Tout part sur le stage,
@@ -147,17 +160,21 @@ module Teledec::Exploration
     end
   end
 
-  # Client brut du stage : jeton obtenu par l'adaptateur réel (droits
-  # facultatifs compris, avec son repli), puis requêtes libres.
+  # Client brut du stage : jeton donné (`Client.adapter` : celui de
+  # l'adaptateur réel, droits facultatifs compris, avec son repli), puis
+  # requêtes libres.
   class Client
     getter scopes : Array(String)
     @token : String
 
-    def initialize(credentials : Credentials)
+    def initialize(@token : String, @scopes : Array(String))
+    end
+
+    def self.adapter(credentials : Credentials) : Client
       capture = TokenCapture.new
       Sandbox.transport(capture).check(credentials)
-      @token = JSON.parse(capture.token_body)["access_token"].as_s
-      @scopes = URI::Params.parse(capture.token_request)["scope"]?.to_s.split(' ').map(&.lchop("stage/"))
+      new(JSON.parse(capture.token_body)["access_token"].as_s,
+        URI::Params.parse(capture.token_request)["scope"]?.to_s.split(' ').map(&.lchop("stage/")))
     end
 
     def post(path : String, body : String, type : String = "application/json") : Remote::Response
@@ -199,14 +216,61 @@ module Teledec::Exploration
 
   # État chez TELEDEC après un dépôt accepté (contrôles internes).
   def self.state(client : Client, email : String, siren : String, date_fin : String, form : String) : String
-    params = URI::Params.build do |query|
-      query.add "email", email
-      query.add "siren", siren
-      query.add "date_fin", date_fin
-      query.add "formulaire", form
+    "suivi " + status_answer(client, {"email" => email, "siren" => siren, "date_fin" => date_fin, "formulaire" => form})[1]
+  end
+
+  # Route de suivi avec des paramètres libres : trouvée (HTTP 200) ou non,
+  # et la réponse lisible.
+  def self.status_answer(client : Client, params : Hash(String, String)) : {Bool, String}
+    query = URI::Params.build { |form| params.each { |name, value| form.add name, value } }
+    response = client.get("/service/declaration-status?#{query}")
+    {response.ok?, "HTTP #{response.status} : #{message(response)}"}
+  end
+
+  # Clés retirées d'une déclaration listée par TELEDEC : liens temporaires
+  # et documents (ils portent des jetons).
+  HIDDEN_KEYS = /lien|url|pdf|token|edi|accuse|hash/i
+
+  # Déclarations que TELEDEC connaît pour l'entreprise
+  # (`GET /service/declarations`), sans liens : dates et formulaires sous
+  # lesquels un dépôt est rangé.
+  def self.declarations(client : Client, email : String, siren : String) : {Bool, String}
+    query = URI::Params.build do |form|
+      form.add "siren", siren
+      form.add "email", email
     end
-    response = client.get("/service/declaration-status?#{params}")
-    "suivi HTTP #{response.status} : #{message(response)}"
+    response = client.get("/service/declarations?#{query}")
+    return {false, "HTTP #{response.status} : #{message(response)}"} unless response.ok?
+    parsed = JSON.parse(response.body)
+    items = parsed.as_a? || parsed.as_h?.try { |hash| hash.values.find(&.as_a?).try(&.as_a) } || [parsed]
+    shown = items.map do |item|
+      item.as_h?.try(&.reject { |key, _| key.matches?(HIDDEN_KEYS) }.to_json) || item.to_json
+    end
+    {true, "HTTP 200, #{items.size} déclaration(s) : #{shown.join(" ; ")}"}
+  rescue JSON::ParseException
+    {false, "réponse illisible : #{response.try(&.body).to_s[0, 200]}"}
+  end
+
+  # Demande brute d'un jeton au service des jetons, avec les droits
+  # `scopes` (préfixe compris) : rend l'issue, la réponse sans le jeton
+  # (statut, erreur, droits annoncés), et le jeton s'il est accordé.
+  def self.token_probe(credentials : Credentials, scopes : Array(String)) : {Bool, String, String?}
+    basic = Base64.strict_encode("#{credentials.login}:#{credentials.api_key}")
+    headers = HTTP::Headers{"Authorization" => "Basic #{basic}", "Content-Type" => "application/x-www-form-urlencoded",
+                            "Accept" => "application/json"}
+    body = URI::Params.build do |form|
+      form.add "grant_type", "client_credentials"
+      form.add "scope", scopes.join(' ')
+    end
+    response = Remote::Net.new.call(Remote::Request.new("POST", HttpTransport::AUTH_URL, headers, body))
+    answer = (JSON.parse(response.body).as_h? rescue nil) || {} of String => JSON::Any
+    token = answer["access_token"]?.try(&.as_s?)
+    if response.ok? && token
+      {true, "HTTP #{response.status}, droits annoncés : #{answer["scope"]?.try(&.as_s?) || "(aucun champ scope)"}", token}
+    else
+      reason = %w[error error_description message].compact_map { |name| answer[name]?.try(&.as_s?) }.join(" — ")
+      {false, "HTTP #{response.status} : #{reason.presence || response.body.strip[0, 200]}", nil}
+    end
   end
 
   # --- Entreprises de test ------------------------------------------------------
@@ -217,15 +281,28 @@ module Teledec::Exploration
   end
 
   # Crée l'entreprise et son compte (`creation-entreprise`), régime
-  # `regime` (`nil` : champ omis).
-  def self.create_company(siren : String, regime : String?, legal_form : String = "SAS") : String
+  # `regime`, forme `legal_form` (envoyée telle quelle : code de TELEDEC
+  # attendu, `SRL` pour une SARL), régime de TVA `vat` (`nil` : champ
+  # omis).
+  def self.create_company(siren : String, regime : String?, legal_form : String? = "SAS", vat : String? = "Normal") : String
     account = Sandbox.transport.account_email(siren)
     company = {"siren" => siren, "name" => "PARTIDUO EXPLORATION #{siren[-3..]}", "yearEndMonth" => 12, "yearEndDay" => 31,
                "addressStreet" => "3 rue des Lilas", "addressPostalCode" => "69003", "addressCity" => "Lyon",
-               "addressCountry" => "FR", "legalForm" => legal_form, "regimeFiscalTVA" => "Normal"} of String => String | Int32
+               "addressCountry" => "FR"} of String => String | Int32
+    legal_form.try { |value| company["legalForm"] = value }
+    vat.try { |value| company["regimeFiscalTVA"] = value }
     regime.try { |value| company["fullRegimeFiscal"] = value }
     Sandbox.transport.create_company(Sandbox.credentials(siret: siret(siren)), company, Sandbox.password_hash, account)
     account
+  end
+
+  # Création de l'entreprise, son refus nommé comme tel (pour distinguer
+  # la route qui refuse) : l'adresse du compte, ou `nil` et le refus.
+  def self.created(siren : String, regime : String?, legal_form : String? = "SAS",
+                   vat : String? = "Normal") : {String?, String}
+    {create_company(siren, regime, legal_form, vat), "création de l'entreprise acceptée"}
+  rescue ex : TransportError
+    {nil, "création de l'entreprise refusée (creation-entreprise) : #{ex.key} — #{ex.params.values.join(" ; ")}"}
   end
 
   def self.submission(payload : Payload, due_on : String? = nil) : Submission
@@ -237,11 +314,13 @@ module Teledec::Exploration
     Credentials.new("x", "y", "sandbox", Sandbox::EMAIL, siret(siren))
   end
 
-  # Document DAS2 de 2025 de l'adaptateur pour l'entreprise `siren`.
-  def self.das2_document(siren : String, account : String) : Hash(String, JSON::Any)
+  # Document DAS2 de 2025 de l'adaptateur pour l'entreprise `siren`, à
+  # l'IS réel simplifié : régime `ISRS` dans l'identité (D-TDC10-002) ;
+  # `with_regime` le change ou le retire.
+  def self.das2_document(siren : String, account : String, legal_form : String = "SAS") : Hash(String, JSON::Any)
     lines = Sandbox.das2_payload.das2 || [] of Payload::Das2Line
-    payload = Payload.new("das2", ["DAS2"], identity(siren), "2025-01-01", "2025-12-31", 0, nil, nil, nil, lines,
-      {"threshold" => "1200"})
+    payload = Payload.new("das2", ["DAS2"], identity(siren, legal_form), "2025-01-01", "2025-12-31", 0, nil, nil, nil,
+      lines, {"threshold" => "1200", "tax_system" => "is_rsi"})
     due = Calendar.das2(2025).to_s("%F")
     JSON.parse(Formats.white_label(payload, submission(payload, due), offline_credentials(siren), Time.utc, account)).as_h
   end
@@ -254,10 +333,59 @@ module Teledec::Exploration
       account)).as_h
   end
 
+  # Régime de l'identité remplacé (`nil` : retiré, comme avant
+  # D-TDC10-002).
+  def self.with_regime(document : Hash(String, JSON::Any), regime : String?) : Hash(String, JSON::Any)
+    edit(document, "identity") do |part|
+      regime ? (part["fullRegimeFiscal"] = JSON::Any.new(regime)) : part.delete("fullRegimeFiscal")
+    end
+  end
+
+  # Dépôt d'une DAS2 en marque blanche, puis, s'il est accepté, son suivi.
+  def self.deposit_das2(client : Client, siren : String, document : Hash(String, JSON::Any), account : String) : {Bool?, String}
+    response = client.post(WHITE_LABEL, document.to_json)
+    accepted, detail = white_label_outcome(response)
+    detail += " ; " + state(client, account, siren, "2025-12-31", "DAS2") if accepted
+    {accepted.as(Bool?), detail}
+  end
+
   def self.edit(document : Hash(String, JSON::Any), block : String, & : Hash(String, JSON::Any) -> _) : Hash(String, JSON::Any)
     part = document[block].as_h.dup
     yield part
     document.merge({block => JSON::Any.new(part)})
+  end
+
+  # Amorces du greffe G1 à G5, corps de plus en plus complet, sur la SAS
+  # `siren` ; jamais finalisées. `tag` distingue le jeton employé.
+  def self.play_greffe(client : Client, siren : String, account : String, tag : String) : Nil
+    payload = Payload.new("greffe", ["greffe"], identity(siren), "2025-01-01", "2025-12-31", 0, nil, nil, nil, nil,
+      {"confidential" => "0"})
+    full = JSON.parse(Formats.greffe(payload, submission(payload), offline_credentials(siren), Time.utc, account)).as_h
+    auth = full["auth"].as_h
+    short = JSON::Any.new(auth.select("email", "timestamp"))
+    bodies = [
+      {"G1 minimal : formulaire seul", {"formulaire" => full["formulaire"]}},
+      {"G2 + auth.email et timestamp", {"formulaire" => full["formulaire"], "auth" => short}},
+      {"G3 + identity", {"formulaire" => full["formulaire"], "auth" => short, "identity" => full["identity"]}},
+      {"G4 + period", {"formulaire" => full["formulaire"], "auth" => short, "identity" => full["identity"],
+                       "period" => full["period"]}},
+      {"G5 + auth.url et retournerLien (corps de l'adaptateur)",
+       full.merge({"auth" => JSON::Any.new(auth.merge({"url" => JSON::Any.new("https://exemple.invalid/hooks/TELEDEC/callback")}))})},
+    ]
+    bodies.each do |(variant, body)|
+      attempt("Greffe", "#{variant}#{tag}") do
+        unless client.scopes.includes?("nouvelle-declaration")
+          next {nil.as(Bool?), "droit nouvelle-declaration absent du jeton (refusé par le service des jetons)"}
+        end
+        response = client.post("/service/nouvelle-declaration", body.to_json)
+        url = Formats.redirect_url(response.body)
+        if response.ok? && !url.empty?
+          {true.as(Bool?), "HTTP #{response.status}, adresse rendue : #{Sandbox.truncated(url)}"}
+        else
+          {false.as(Bool?), "HTTP #{response.status} : #{message(response)}"}
+        end
+      end
+    end
   end
 
   WHITE_LABEL = "/service/declaration-marque-blanche"
@@ -268,11 +396,22 @@ private alias Sandbox = Teledec::SandboxSpec
 
 describe "Exploration du stage de TELEDEC (optionnelle)" do
   it "forme des SIREN et des SIRET fictifs à clé valide, distincts" do
-    sirens = (1..12).map { |number| Explore.siren(number) }
-    sirens.uniq.size.should eq(12)
+    numbers = (1..14).to_a + [20, 21, 30, 31] + (40..47).to_a + [50, 51]
+    sirens = numbers.map { |number| Explore.siren(number) }
+    sirens.uniq.size.should eq(numbers.size)
     sirens.all? { |siren| siren.size == 9 && siren.starts_with?("998") && Explore.luhn?(siren) }.should be_true
     sirens.all? { |siren| Explore.luhn?(Explore.siret(siren)) && Explore.siret(siren).size == 14 }.should be_true
     Explore.luhn?(Sandbox::SIREN).should be_true # entreprise de la suite du stage
+  end
+
+  it "dépose la DAS2 avec le régime ISRS de l'adaptateur, retiré ou remplacé à la demande, sans autre formulaire" do
+    siren = Explore.siren(11)
+    document = Explore.das2_document(siren, "compte@exemple.org")
+    (document.keys - %w[auth identity period]).should eq(["DAS2"])
+    document["identity"]["fullRegimeFiscal"].as_s.should eq("ISRS")
+    Explore.with_regime(document, nil)["identity"]["fullRegimeFiscal"]?.should be_nil
+    Explore.with_regime(document, "ISRN")["identity"]["fullRegimeFiscal"].as_s.should eq("ISRN")
+    document["identity"]["fullRegimeFiscal"].as_s.should eq("ISRS") # document d'origine intact
   end
 
   it "écrit un tableau expurgé dans un fichier à droits 0600" do
@@ -298,19 +437,18 @@ describe "Exploration du stage de TELEDEC (optionnelle)" do
     it "1. DAS2 seule : variantes de la plus probable à la moins probable" do
       Sandbox.require_stage!
       Sandbox.account!
-      client = Explore::Client.new(Sandbox.credentials)
+      client = Explore::Client.adapter(Sandbox.credentials)
       section = "DAS2"
+      # Première série : DAS2 sans régime dans la payload (comme avant
+      # D-TDC10-002), sauf D1 (adaptateur actuel) et D4.
       dated = ->(siren : String, document : Hash(String, JSON::Any), account : String) do
-        response = client.post(Explore::WHITE_LABEL, document.to_json)
-        accepted, detail = Explore.white_label_outcome(response)
-        detail += " ; " + Explore.state(client, account, siren, "2025-12-31", "DAS2") if accepted
-        {accepted.as(Bool?), detail}
+        Explore.deposit_das2(client, siren, Explore.with_regime(document, nil), account)
       end
 
-      Explore.attempt(section, "D1 adaptateur actuel : entreprise ISRS, DAS2 seule, millésime 2026") do
+      Explore.attempt(section, "D1 adaptateur actuel : entreprise ISRS, DAS2 seule, millésime 2026, régime ISRS dans l'identité") do
         siren = Explore.siren(1)
         account = Explore.create_company(siren, "ISRS")
-        dated.call(siren, Explore.das2_document(siren, account), account)
+        Explore.deposit_das2(client, siren, Explore.das2_document(siren, account), account)
       end
       Explore.attempt(section, "D2 sans period.millesime (déduit des dates, comme la TVA)") do
         siren = Explore.siren(2)
@@ -326,15 +464,14 @@ describe "Exploration du stage de TELEDEC (optionnelle)" do
       Explore.attempt(section, "D4 identity.fullRegimeFiscal ISRS dans la payload (schéma DAS2-2026)") do
         siren = Explore.siren(4)
         account = Explore.create_company(siren, "ISRS")
-        document = Explore.edit(Explore.das2_document(siren, account), "identity") { |part| part["fullRegimeFiscal"] = JSON::Any.new("ISRS") }
-        dated.call(siren, document, account)
+        Explore.deposit_das2(client, siren, Explore.with_regime(Explore.das2_document(siren, account), "ISRS"), account)
       end
       Explore.attempt(section, "D5 entreprise ISRN (régime réel normal)") do
         siren = Explore.siren(5)
         account = Explore.create_company(siren, "ISRN")
         dated.call(siren, Explore.das2_document(siren, account), account)
       end
-      Explore.attempt(section, "D6 entreprise BICRS (IR)") do
+      Explore.attempt(section, "D6 entreprise BICRS (IR), forme « SARL » en clair") do
         siren = Explore.siren(6)
         account = Explore.create_company(siren, "BICRS", "SARL")
         dated.call(siren, Explore.das2_document(siren, account), account)
@@ -379,40 +516,10 @@ describe "Exploration du stage de TELEDEC (optionnelle)" do
     it "2. Greffe : amorce nouvelle-declaration, corps de plus en plus complet (jamais finalisé)" do
       Sandbox.require_stage!
       Sandbox.account!
-      section = "Greffe"
       siren = Explore.siren(20)
       account = Explore.create_company(siren, "ISRS", "SAS")
-      client = Explore::Client.new(Sandbox.credentials(siret: Explore.siret(siren)))
-      payload = Teledec::Payload.new("greffe", ["greffe"], Explore.identity(siren), "2025-01-01", "2025-12-31", 0, nil,
-        nil, nil, nil, {"confidential" => "0"})
-      full = JSON.parse(Teledec::Remote::Formats.greffe(payload, Explore.submission(payload),
-        Explore.offline_credentials(siren), Time.utc, account)).as_h
-      auth = full["auth"].as_h
-      bodies = [
-        {"G1 minimal : formulaire seul", {"formulaire" => full["formulaire"]}},
-        {"G2 + auth.email et timestamp", {"formulaire" => full["formulaire"],
-                                          "auth"       => JSON::Any.new(auth.select("email", "timestamp"))}},
-        {"G3 + identity", {"formulaire" => full["formulaire"], "auth" => JSON::Any.new(auth.select("email", "timestamp")),
-                           "identity" => full["identity"]}},
-        {"G4 + period", {"formulaire" => full["formulaire"], "auth" => JSON::Any.new(auth.select("email", "timestamp")),
-                         "identity" => full["identity"], "period" => full["period"]}},
-        {"G5 + auth.url et retournerLien (corps de l'adaptateur)",
-         full.merge({"auth" => JSON::Any.new(auth.merge({"url" => JSON::Any.new("https://exemple.invalid/hooks/TELEDEC/callback")}))})},
-      ]
-      bodies.each do |(variant, body)|
-        Explore.attempt(section, variant) do
-          unless client.scopes.includes?("nouvelle-declaration")
-            next {nil.as(Bool?), "droit nouvelle-declaration absent du jeton (refusé par le service des jetons)"}
-          end
-          response = client.post("/service/nouvelle-declaration", body.to_json)
-          url = Teledec::Remote::Formats.redirect_url(response.body)
-          if response.ok? && !url.empty?
-            {true.as(Bool?), "HTTP #{response.status}, adresse rendue : #{Sandbox.truncated(url)}"}
-          else
-            {false.as(Bool?), "HTTP #{response.status} : #{Explore.message(response)}"}
-          end
-        end
-      end
+      client = Explore::Client.adapter(Sandbox.credentials(siret: Explore.siret(siren)))
+      Explore.play_greffe(client, siren, account, "")
     end
 
     it "3. Liasse : #CREATION-AUTO OUI suffit-il sans creation-entreprise ?" do
@@ -425,7 +532,7 @@ describe "Exploration du stage de TELEDEC (optionnelle)" do
         Explore.attempt(section, variant) do
           siren = Explore.siren(number)
           account = create ? Explore.create_company(siren, "ISRS") : Sandbox.transport.account_email(siren)
-          client = Explore::Client.new(Sandbox.credentials(siret: Explore.siret(siren)))
+          client = Explore::Client.adapter(Sandbox.credentials(siret: Explore.siret(siren)))
           base = Sandbox.liasse_payload
           payload = Teledec::Payload.new("liasse", base.forms, Explore.identity(siren), base.period_from, base.period_to,
             0, base.balance)
@@ -437,6 +544,155 @@ describe "Exploration du stage de TELEDEC (optionnelle)" do
             next {false.as(Bool?), "HTTP #{response.status} : #{Explore.message(response)}"}
           end
           {true.as(Bool?), "liasse acceptée ; " + Explore.state(client, account, siren, "2025-12-31", "liasse")}
+        end
+      end
+    end
+
+    # --- Deuxième série (D-TDC10-003) --------------------------------------------
+
+    it "4. DAS2 : le régime dans la payload suffit-il hors IS réel simplifié ?" do
+      Sandbox.require_stage!
+      Sandbox.account!
+      client = Explore::Client.adapter(Sandbox.credentials)
+      # Régime, forme juridique (code de TELEDEC à la création, texte de
+      # Partiduo dans l'identité de la DAS2), numéro de variante.
+      [{"ISRN", "SAS", "SAS", 11}, {"BICRS", "SRL", "SARL", 12}, {"BICRN", "SRL", "SARL", 13},
+       {"BNCDC", "EI", "EI", 14}].each do |(regime, code, form, number)|
+        Explore.attempt("DAS2", "D#{number} entreprise #{regime} (#{code}), identity.fullRegimeFiscal #{regime}") do
+          siren = Explore.siren(number)
+          account, created = Explore.created(siren, regime, code)
+          next {nil.as(Bool?), created} unless account
+          Explore.deposit_das2(client, siren, Explore.with_regime(Explore.das2_document(siren, account, form), regime), account)
+        end
+      end
+    end
+
+    it "5. BICRS : cause du « Misformatted JSON » (création de l'entreprise seule)" do
+      Sandbox.require_stage!
+      Sandbox.account!
+      # Régime, forme juridique (`nil` : omise), régime de TVA (`nil` :
+      # omis) ; aucun dépôt, la création seule.
+      [{"B1 BICRS, forme « SARL » en clair (comme D6)", "BICRS", "SARL", "Normal"},
+       {"B2 BICRS, forme SRL (code de TELEDEC de la SARL)", "BICRS", "SRL", "Normal"},
+       {"B3 BICRS, forme SAS", "BICRS", "SAS", "Normal"},
+       {"B4 BICRS, forme EI", "BICRS", "EI", "Normal"},
+       {"B5 BICRS, sans legalForm", "BICRS", nil, "Normal"},
+       {"B6 BICRS, forme SRL, sans regimeFiscalTVA", "BICRS", "SRL", nil},
+       {"B7 témoin ISRS, forme « SARL » en clair", "ISRS", "SARL", "Normal"},
+       {"B8 BICRN, forme SRL", "BICRN", "SRL", "Normal"}].each_with_index do |(variant, regime, form, vat), index|
+        Explore.attempt("BICRS", variant) do
+          account, detail = Explore.created(Explore.siren(40 + index), regime, form, vat)
+          {!account.nil?.as(Bool?), detail}
+        end
+      end
+    end
+
+    it "6. Greffe : nom du droit demandé au service des jetons, puis amorces avec le premier accordé" do
+      Sandbox.require_stage!
+      Sandbox.account!
+      credentials = Sandbox.credentials
+      base = (Teledec::HttpTransport::SCOPES - Teledec::HttpTransport::OPTIONAL_SCOPES).map { |scope| "stage/#{scope}" }
+      granted = nil
+      [{"J1 stage/nouvelle-declaration (avec les droits de l'adaptateur)", base + ["stage/nouvelle-declaration"]},
+       {"J2 stage/nouvelle-declaration seul", ["stage/nouvelle-declaration"]},
+       {"J3 nouvelle-declaration sans préfixe", base + ["nouvelle-declaration"]},
+       {"J4 stage/nouvelle_declaration", base + ["stage/nouvelle_declaration"]},
+       {"J5 stage/nouvelleDeclaration", base + ["stage/nouvelleDeclaration"]}].each do |(variant, scopes)|
+        Explore.attempt("Jeton", variant) do
+          accepted, detail, token = Explore.token_probe(credentials, scopes)
+          granted ||= token.try { |value| {value, scopes.last, variant[0, 2]} }
+          {accepted.as(Bool?), detail}
+        end
+      end
+      found = granted
+      unless found
+        Explore.attempt("Greffe", "G1–G5 (deuxième série)") { {nil.as(Bool?), "aucun nom de droit accordé par le service des jetons"} }
+        next
+      end
+      token, scope, label = found
+      siren = Explore.siren(21)
+      account, created = Explore.created(siren, "ISRS", "SAS")
+      unless account
+        Explore.attempt("Greffe", "G1–G5 (jeton #{label})") { {nil.as(Bool?), created} }
+        next
+      end
+      # Le droit accordé est tenu pour celui du greffe : l'amorce le dira.
+      Explore.play_greffe(Explore::Client.new(token, ["nouvelle-declaration"]), siren, account, " (jeton #{label}, #{scope})")
+    end
+
+    it "7. Suivi : délai après le dépôt ou paramètres de la route ?" do
+      Sandbox.require_stage!
+      Sandbox.account!
+      section = "Suivi"
+      # Dépôts acceptés : DAS2 ISRS (adaptateur actuel) et liasse
+      # (entreprise créée avant, comme L2).
+      das2_siren, liasse_siren = Explore.siren(50), Explore.siren(51)
+      das2_account = Explore.create_company(das2_siren, "ISRS")
+      liasse_account = Explore.create_company(liasse_siren, "ISRS")
+      client = Explore::Client.adapter(Sandbox.credentials(siret: Explore.siret(liasse_siren)))
+      deposited = {} of String => Bool
+      Explore.attempt(section, "S0 dépôt de la DAS2 (ISRS, régime dans l'identité)") do
+        response = client.post(Explore::WHITE_LABEL, Explore.das2_document(das2_siren, das2_account).to_json)
+        accepted, detail = Explore.white_label_outcome(response)
+        deposited["das2"] = accepted
+        {accepted.as(Bool?), detail}
+      end
+      Explore.attempt(section, "S0 dépôt de la liasse (creation-entreprise avant)") do
+        base = Sandbox.liasse_payload
+        payload = Teledec::Payload.new("liasse", base.forms, Explore.identity(liasse_siren), base.period_from,
+          base.period_to, 0, base.balance)
+        credentials = Sandbox.credentials(siret: Explore.siret(liasse_siren))
+        source = Sandbox.instance_setting("TELEDEC_SOURCE") || "API"
+        body = Teledec::Remote::Formats.liasse(payload, Explore.submission(payload), credentials, source, false, liasse_account)
+        response = client.post("/service/liasse", body, "text/plain; charset=utf-8")
+        accepted = response.ok? && !Teledec::Remote::Formats.redirect_url(response.body).empty?
+        deposited["liasse"] = accepted
+        {accepted.as(Bool?), accepted ? "liasse acceptée" : "HTTP #{response.status} : #{Explore.message(response)}"}
+      end
+      started = Time.instant
+      due = Teledec::Calendar.das2(2025).to_s("%F")
+      das2_params = {"email" => das2_account, "siren" => das2_siren, "date_fin" => "2025-12-31", "formulaire" => "DAS2"}
+      liasse_params = {"email" => liasse_account, "siren" => liasse_siren, "date_fin" => "2025-12-31", "formulaire" => "liasse"}
+      probe = ->(variant : String, kind : String, params : Hash(String, String)) do
+        Explore.attempt(section, variant) do
+          next {nil.as(Bool?), "dépôt #{kind} refusé : rien à suivre"} unless deposited[kind]?
+          found, detail = Explore.status_answer(client, params)
+          {found.as(Bool?), "#{found ? "trouvé" : "non trouvé"} — #{detail}"}
+        end
+      end
+      # Délai : mêmes paramètres (ceux de l'adaptateur) après 0, 10, 30 et
+      # 60 secondes.
+      [0, 10, 30, 60].each_with_index do |delay, index|
+        wait = delay.seconds - (Time.instant - started)
+        sleep wait if wait > Time::Span.zero
+        probe.call("S#{index + 1} DAS2, paramètres de l'adaptateur, #{delay} s après", "das2", das2_params)
+        probe.call("S#{index + 1} liasse, paramètres de l'adaptateur, #{delay} s après", "liasse", liasse_params)
+      end
+      # Paramètres (au-delà de 60 s).
+      partner = Sandbox::EMAIL
+      [{"S5 DAS2 + date_echeance (échéance de la DAS2)", das2_params.merge({"date_echeance" => due})},
+       {"S6 DAS2, formulaire Part (declarationType des rappels)", das2_params.merge({"formulaire" => "Part"})},
+       {"S7 DAS2, formulaire das2 (minuscules)", das2_params.merge({"formulaire" => "das2"})},
+       {"S8 DAS2, date_fin = échéance", das2_params.merge({"date_fin" => due})},
+       {"S9 DAS2, date_fin au format 31/12/2025", das2_params.merge({"date_fin" => "31/12/2025"})},
+       {"S10 DAS2, siret au lieu du siren", das2_params.merge({"siren" => Explore.siret(das2_siren)})},
+       {"S11 DAS2, email du partenaire au lieu du compte", das2_params.merge({"email" => partner})},
+       {"S12 DAS2, sans email", das2_params.reject("email")}].each do |(variant, params)|
+        probe.call(variant, "das2", params)
+      end
+      [{"S13 liasse, formulaire 2065", liasse_params.merge({"formulaire" => "2065"})},
+       {"S14 liasse, formulaire 2033", liasse_params.merge({"formulaire" => "2033"})},
+       {"S15 liasse, date_fin au format 31/12/2025", liasse_params.merge({"date_fin" => "31/12/2025"})},
+       {"S16 liasse, email du partenaire au lieu du compte", liasse_params.merge({"email" => partner})},
+       {"S17 liasse, sans email", liasse_params.reject("email")}].each do |(variant, params)|
+        probe.call(variant, "liasse", params)
+      end
+      # Ce que TELEDEC range pour chaque entreprise : dates et formulaire
+      # sous lesquels chercher le dépôt.
+      {"das2" => {das2_account, das2_siren}, "liasse" => {liasse_account, liasse_siren}}.each do |kind, (account, siren)|
+        Explore.attempt(section, "S18 déclarations listées (#{kind})") do
+          found, detail = Explore.declarations(client, account, siren)
+          {found.as(Bool?), detail}
         end
       end
     end

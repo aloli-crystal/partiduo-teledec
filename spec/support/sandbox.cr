@@ -344,7 +344,8 @@ module Teledec::SandboxSpec
   end
 
   # DAS2 de 2025, seule (formulaire principal) au millésime de sa campagne,
-  # 2026 (D-TDC6-001) : une société (raison sociale et SIRET) payée de deux
+  # 2026 (D-TDC6-001), entreprise à l'IS réel simplifié dont le régime
+  # (`ISRS`) part dans l'identité (D-TDC10-002) : une société (raison sociale et SIRET) payée de deux
   # natures (honoraires et commissions : sous-tableau
   # `repetitionDAS2MontantSommesVersees`), une personne physique (nom,
   # prénoms, date de naissance) payée de droits d'auteur.
@@ -357,7 +358,7 @@ module Teledec::SandboxSpec
         birth_date: "1980-05-14"),
     ]
     Payload.new("das2", ["DAS2"], identity, "2025-01-01", "2025-12-31", 0, nil, nil, nil, lines,
-      {"threshold" => "1200"})
+      {"threshold" => "1200", "tax_system" => "is_rsi"})
   end
 
   # Dépôt au greffe des comptes de l'exercice 2025 de l'entreprise de test

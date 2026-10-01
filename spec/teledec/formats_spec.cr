@@ -300,21 +300,53 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
       repetitions[2]["AE_3036_1"]?.should be_nil
     end
 
-    it "dépose la DAS2 seule (formulaire principal), au millésime de sa campagne, régime connu ou non" do
+    it "dépose la DAS2 seule (formulaire principal), au millésime de sa campagne, avec le régime ISRS dans l'identité" do
       lines = [Payload::Das2Line.new("F2", "Agence Martin", "", "", "", "", "", "FR", {"fees" => "700"}, "700")]
-      [{"tax_system" => "is_rsi"}, {} of String => String].each do |details|
-        payload = Payload.new("das2", %w[DAS2], identity, "2025-01-01", "2025-12-31", das2: lines, details: details)
-        document = white_label(payload, submission("das2", "2026-05-05"))
-        (document.as_h.keys - %w[auth identity period]).should eq(["DAS2"])
-        # Sommes versées en 2025 : campagne 2026 (seul millésime de la DAS2).
-        document["period"]["millesime"].as_i.should eq(2026)
-        document["identity"]["fullRegimeFiscal"]?.should be_nil
-      end
+      payload = Payload.new("das2", %w[DAS2], identity, "2025-01-01", "2025-12-31", das2: lines,
+        details: {"tax_system" => "is_rsi"})
+      document = white_label(payload, submission("das2", "2026-05-05"))
+      (document.as_h.keys - %w[auth identity period]).should eq(["DAS2"])
+      # Sommes versées en 2025 : campagne 2026 (seul millésime de la DAS2).
+      document["period"]["millesime"].as_i.should eq(2026)
+      # Sans régime dans l'identité, le stage refuse la DAS2 seule
+      # (D-TDC10-002).
+      document["identity"]["fullRegimeFiscal"].as_s.should eq("ISRS")
       # Les autres dépôts n'ont que leur formulaire, sans régime fiscal
-      # complet (réservé à l'option EDI Requête).
+      # complet : TELEDEC le déduit de leurs formulaires.
       document = white_label(vat("vat_ca3", {"08.base" => "100", "08.tax" => "20", "32" => "20"}))
       (document.as_h.keys - %w[auth identity period]).should eq(["3310CA3"])
       document["identity"]["fullRegimeFiscal"]?.should be_nil
+    end
+
+    it "refuse localement la DAS2 seule hors IS réel simplifié, sans jamais lui adjoindre une autre déclaration" do
+      lines = [Payload::Das2Line.new("F2", "Agence Martin", "", "", "", "", "", "FR", {"fees" => "700"}, "700")]
+      das2 = ->(details : Hash(String, String)) do
+        Payload.new("das2", %w[DAS2], identity, "2025-01-01", "2025-12-31", das2: lines, details: details)
+      end
+      # Régime inconnu : TELEDEC exige le régime avec la DAS2 seule.
+      error = expect_raises(Teledec::TransportError) { white_label(das2.call({} of String => String)) }
+      error.key.should eq("teledec.errors.transport.das2_tax_system")
+      # Régimes dont TELEDEC a nommé les formulaires principaux.
+      {"is_rn" => {"ISRN", "2065 + 2050"}, "bic_rsi" => {"BICRS", "2031"}, "bnc" => {"BNCDC", "2035"}}.each do |system, (regime, form)|
+        error = expect_raises(Teledec::TransportError) { white_label(das2.call({"tax_system" => system})) }
+        error.key.should eq("teledec.errors.transport.das2_alone")
+        error.params["regime"].should eq(regime)
+        error.params["forms"].should contain(form)
+      end
+      # Régimes que la liste de TELEDEC ne nomme pas.
+      %w[bic_rn sci].each do |system|
+        error = expect_raises(Teledec::TransportError) { white_label(das2.call({"tax_system" => system})) }
+        error.key.should eq("teledec.errors.transport.das2_alone_unlisted")
+      end
+      # Messages traduits.
+      %w[das2_tax_system das2_alone das2_alone_unlisted].each do |name|
+        %w[fr en nl].each do |locale|
+          I18n.with_locale(locale) do
+            I18n.t("teledec.errors.transport.#{name}", regime: "ISRN", forms: "2065").should_not contain("missing")
+            I18n.t("teledec.controls.#{name}", regime: "ISRN", forms: "2065").should_not contain("missing")
+          end
+        end
+      end
     end
 
     it "porte l'année de campagne pour les relevés d'IS (échéance), aucun millésime pour la TVA" do
@@ -352,7 +384,8 @@ describe "Formats de l'API partenaire de TELEDEC (unitaires)" do
 
     it "refuse une nature de DAS2 sans lettre plutôt que de la déclarer en « autres »" do
       lines = [Payload::Das2Line.new("F2", "Agence Martin", "", "", "", "", "", "FR", {"mystere" => "90"}, "90")]
-      payload = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", das2: lines)
+      payload = Payload.new("das2", %w[DAS2], identity, "2026-01-01", "2026-12-31", das2: lines,
+        details: {"tax_system" => "is_rsi"})
       error = expect_raises(Teledec::TransportError) { white_label(payload) }
       error.key.should eq("teledec.errors.transport.das2_nature")
       error.params["nature"].should eq("mystere")
