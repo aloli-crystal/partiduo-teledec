@@ -99,6 +99,7 @@ nl:
         locked: "Deze aangifte is al %{status}: ze kan niet meer worden voorbereid."
         status: "Niet mogelijk: de aangifte is %{status}."
         changed: "De boekingen zijn gewijzigd sinds de voorbereiding: bereid de aangifte opnieuw voor."
+        liberal_year_open: "De 2035 van %{year} wordt ingediend voor een afgesloten boekjaar: sluit het boekjaar %{year} af (scherm 2035 of kasboek) en dien daarna in."
         not_ready:
           one: "Een blokkerende controle verhindert de verzending."
           other: "%{count} blokkerende controles verhinderen de verzending."
@@ -152,6 +153,7 @@ nl:
       balance_unbalanced: "De proef- en saldibalans is niet in evenwicht (verschil van %{difference})."
       fiscal_year_open: "Het boekjaar is niet afgesloten: de balans kan nog wijzigen."
       corporate_tax_zero: "Belastingbedrag nul."
+      liberal_year_open: "Het boekjaar %{year} is niet afgesloten: sluit het af (scherm 2035 of kasboek) vóór de indiening van de 2035."
       liberal_not_ready:
         one: "De voorbereide 2035 heeft een blokkerende controle (scherm 2035)."
         other: "De voorbereide 2035 heeft %{count} blokkerende controles (scherm 2035)."

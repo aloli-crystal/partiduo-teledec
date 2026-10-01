@@ -381,6 +381,7 @@ module Teledec::SandboxSpec
     SpecSupport.liberal_line("receipt", "2025-03-03", "42000", "RECEIPTS")
     SpecSupport.liberal_line("expense", "2025-03-04", "9600", "RENT")
     SpecSupport.liberal_line("expense", "2025-03-05", "850", "OFFICE")
+    Partiduo::Api::Liberal.close_year(SpecSupport::SYSTEM, 2025).value!
     filing = Api.prepare(actor, Api::PrepareInput.new(kind: "liasse", fiscal_year_id: fiscal_year.id)).value!
     unless filing.ready?
       raise "2035 non prête : #{filing.controls.select(&.error?).map(&.key).join(", ")}"

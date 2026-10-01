@@ -99,6 +99,7 @@ en:
         locked: "This return is already %{status}: it can no longer be prepared."
         status: "Not possible: the return is %{status}."
         changed: "Entries changed since preparation: prepare the return again."
+        liberal_year_open: "The %{year} 2035 is filed for a closed year: close year %{year} (2035 or cash book screen), then file."
         not_ready:
           one: "A blocking check prevents transmission."
           other: "%{count} blocking checks prevent transmission."
@@ -152,6 +153,7 @@ en:
       balance_unbalanced: "The trial balance is not balanced (difference of %{difference})."
       fiscal_year_open: "The financial year is not closed: the trial balance may still change."
       corporate_tax_zero: "Zero tax amount."
+      liberal_year_open: "Year %{year} is not closed: close it (2035 or cash book screen) before filing the 2035."
       liberal_not_ready:
         one: "The prepared 2035 has a blocking check (2035 screen)."
         other: "The prepared 2035 has %{count} blocking checks (2035 screen)."

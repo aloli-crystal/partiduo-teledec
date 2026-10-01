@@ -76,6 +76,8 @@ module Teledec
       liberal_line("receipt", "#{year}-03-03", "42000", "RECEIPTS")
       liberal_line("expense", "#{year}-03-04", "9600", "RENT")
       liberal_line("expense", "#{year}-03-05", "850", "OFFICE")
+      # La 2035 se transmet sur un exercice clôturé (D-LIB5-003).
+      Partiduo::Api::Liberal.close_year(SYSTEM, year).value!
       actor = admin(LIBERAL)
       filing = Api.prepare(actor, Api::PrepareInput.new(kind: "liasse", fiscal_year_id: fiscal_year_id)).value!
       raise "2035 non prête : #{filing.controls.select(&.error?).map(&.key).join(", ")}" unless filing.ready?

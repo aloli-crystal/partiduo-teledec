@@ -261,6 +261,7 @@ describe "Documents de l'adaptateur réel contre les schémas officiels de TELED
     S.connect
     S.liberal_line("receipt", "2026-03-03", "42000", "RECEIPTS")
     S.liberal_line("expense", "2026-03-04", "9600", "RENT")
+    Partiduo::Api::Liberal.close_year(S::SYSTEM, 2026).value!
     S.teledec.schemas = Remote::Schemas.new(SchemaSpec::DIR)
     actor = S.admin(S::LIBERAL)
     filing = Api.prepare(actor, Api::PrepareInput.new(kind: "liasse", fiscal_year_id: S.fiscal_year_id)).value!

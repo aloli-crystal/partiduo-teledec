@@ -168,6 +168,8 @@ module Teledec
     private def self.liberal_boxes(ends_on : Time, controls : Array(ControlView), details : Hash(String, String)) : Hash(String, Hash(String, String))
       prepared = Partiduo::Api::Liberal.tax_return(system, ends_on.year)
       controls << error("teledec.controls.liberal_not_ready", {"count" => prepared.controls.count(&.error?).to_s}) unless prepared.ready?
+      # La 2035 se transmet sur un exercice clôturé (DECISIONS D-LIB5-003).
+      controls << error("teledec.controls.liberal_year_open", {"year" => ends_on.year.to_s}) if prepared.exercise.open?
       details["tax_return_fingerprint"] = prepared.fingerprint
       boxes = prepared.boxes.transform_values { |values| values.transform_values { |amount| Money.euros_text(amount) } }
       # Case hors du schéma de TELEDEC au millésime de la liasse : ignorée

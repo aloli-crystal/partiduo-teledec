@@ -136,16 +136,22 @@ D-TDC-001 à D-TDC-028.
 balance ; toute autre sorte échoue sur `teledec.errors.accounting_required`
 (erreur de base), sans lecture de `Partiduo::Api::Accounting`.
 
-*2035 transmise : exercice du module `liberal` figé* (DECISIONS
-D-LIB2-003). Pour une liasse qui joint la 2035 du module
-(`details.tax_return_fingerprint`, avec ou sans la Comptabilité),
-l'extension publie `tax_return.transmitted` (`form` `2035`, `year`,
-`reference` `teledec:<dépôt>`, `fingerprint`) dans la transaction qui note
-la transmission (`transmit`, ou `record_outcome` pour un dépôt noté à la
-main), et `tax_return.rejected` (mêmes clés) quand ce dépôt est rejeté
-(suivi, rappel ou saisie). Le module `liberal` s'y abonne : l'exercice est
-figé, ou redevient modifiable s'il n'est pas clôturé. Aucune commande du
-module n'est appelée (`Teledec::TaxReturns`).
+*2035 d'un exercice clôturé ; transmise, exercice verrouillé* (DECISIONS
+D-LIB2-003, D-LIB5-002, D-LIB5-003). La 2035 du module `liberal` se
+transmet sur un exercice *clôturé* par le professionnel : tant qu'il est
+ouvert, la liasse porte le contrôle bloquant
+`teledec.controls.liberal_year_open`, et `transmit` comme `record_outcome`
+(transmission notée à la main) refusent avec
+`teledec.errors.filing.liberal_year_open` (erreur de base, traduite). Pour
+une liasse qui joint la 2035 du module (`details.tax_return_fingerprint`,
+avec ou sans la Comptabilité), l'extension publie `tax_return.transmitted`
+(`form` `2035`, `year`, `reference` `teledec:<dépôt>`, `fingerprint`) dans
+la transaction qui note la transmission, et `tax_return.rejected` (mêmes
+clés) quand ce dépôt est rejeté (suivi, rappel ou saisie). Le module
+`liberal` s'y abonne : l'exercice est verrouillé (plus de réouverture), ou,
+au rejet, rendu clôturé pour correction et nouvel envoi. L'extension lit
+l'état par `Liberal.year` et n'appelle aucune commande du module
+(`Teledec::TaxReturns`).
 
 `das2` : `year` de 2000 à 2100 (`teledec.errors.year.invalid`).
 

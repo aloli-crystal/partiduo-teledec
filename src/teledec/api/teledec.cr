@@ -216,8 +216,9 @@ module Teledec
     end
 
     # Transmet un dépôt préparé à TELEDEC ; une 2035 du module `liberal`
-    # transmise fige son exercice (`tax_return.transmitted`, D-LIB2-003).
-    # Refus : dépôt non préparé,
+    # transmise verrouille son exercice (`tax_return.transmitted`,
+    # D-LIB2-003, D-LIB5-002). Refus : exercice libéral encore ouvert
+    # (D-LIB5-003, `teledec.errors.filing.liberal_year_open`), dépôt non préparé,
     # document modifié depuis la préparation, contrôle bloquant, transport
     # désactivé (`Transports.current = nil`), identifiants
     # absents ou illisibles, erreur de TELEDEC (notée dans l'historique).
@@ -236,6 +237,8 @@ module Teledec
       filing = find(id)
       authorize_sources!(actor, filing.kind.to_s)
       return status_failure(filing) unless filing.status == "prepared"
+      open_year = TaxReturns.open_year_errors(filing)
+      return Result(FilingView).failure(open_year) unless open_year.empty?
       built = Builder.build(input_of(filing), Settings.current!)
       return Result(FilingView).failure(built.errors) if built.failure?
       if built.value!.payload.fingerprint != filing.fingerprint
@@ -388,6 +391,9 @@ module Teledec
         if input.status == "rejected" && input.reason.strip.empty?
           errors << FieldError.new("reason", "teledec.errors.outcome.reason")
         end
+        # Transmission notée à la main : la 2035 d'un exercice libéral
+        # ouvert ne se transmet pas non plus (D-LIB5-003).
+        errors.concat(TaxReturns.open_year_errors(filing)) if errors.empty? && filing.status == "prepared"
         next Result(FilingView).failure(errors) unless errors.empty?
 
         # La pièce est remise telle quelle au socle, qui borne la lecture

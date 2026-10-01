@@ -99,6 +99,7 @@ fr:
         locked: "Cette déclaration est déjà %{status} : elle ne se prépare plus."
         status: "Opération impossible : la déclaration est %{status}."
         changed: "Les écritures ont changé depuis la préparation : préparez de nouveau la déclaration."
+        liberal_year_open: "La 2035 de %{year} se transmet sur un exercice clôturé : clôturez l'exercice %{year} (écran 2035 ou livre-journal), puis transmettez."
         not_ready:
           one: "Un contrôle bloquant empêche la transmission."
           other: "%{count} contrôles bloquants empêchent la transmission."
@@ -154,6 +155,7 @@ fr:
       balance_unbalanced: "La balance n'est pas équilibrée (écart de %{difference})."
       fiscal_year_open: "L'exercice n'est pas clôturé : la balance peut encore changer."
       corporate_tax_zero: "Montant d'impôt nul."
+      liberal_year_open: "L'exercice %{year} n'est pas clôturé : clôturez-le (écran 2035 ou livre-journal) avant de transmettre la 2035."
       liberal_not_ready:
         one: "La 2035 préparée a un contrôle bloquant (écran 2035)."
         other: "La 2035 préparée a %{count} contrôles bloquants (écran 2035)."

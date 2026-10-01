@@ -53,6 +53,10 @@ describe "TELEDEC pour un libéral sans Comptabilité (D-TDC2)" do
   it "prépare la 2035 depuis celle du module liberal, sans balance" do
     S.liberal_books
     year_2026
+    # Exercice ouvert : contrôle bloquant (D-LIB5-003) ; clôturé, prête.
+    open = Api.prepare(liberal_admin, Api::PrepareInput.new(kind: "liasse", fiscal_year_id: S.fiscal_year_id)).value!
+    open.errors.map(&.key).should eq(["teledec.controls.liberal_year_open"])
+    Partiduo::Api::Liberal.close_year(S::SYSTEM, 2026).value!
     filing = Api.prepare(liberal_admin, Api::PrepareInput.new(kind: "liasse", fiscal_year_id: S.fiscal_year_id)).value!
     prepared = Partiduo::Api::Liberal.tax_return(S::SYSTEM, 2026)
     filing.forms.should eq(%w[2035])
@@ -133,6 +137,7 @@ describe "TELEDEC pour un libéral sans Comptabilité (D-TDC2)" do
   it "contrôle et transmet la 2035 sans balance ; un dépôt de TVA ancien ne se contrôle plus" do
     S.liberal_books
     year_2026
+    Partiduo::Api::Liberal.close_year(S::SYSTEM, 2026).value!
     S.connect
     filing = Api.prepare(liberal_admin, Api::PrepareInput.new(kind: "liasse", fiscal_year_id: S.fiscal_year_id)).value!
     Api.check(liberal_admin, filing.id).value!.controls.map(&.key).should_not contain("teledec.controls.changed")
