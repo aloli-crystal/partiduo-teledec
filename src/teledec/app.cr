@@ -29,7 +29,15 @@ require "./api/**"
 # `payload.cr` (document transmis), `secrets.cr` (identifiants chiffrés) et
 # `money.cr` (arrondis).
 module Teledec
-  VERSION = "0.1.0"
+  # Lue à la compilation dans `shard.yml`, seule source du numéro : chaque
+  # commit y incrémente le dernier chiffre.
+  VERSION = {{
+              (read_file("#{__DIR__}/../../shard.yml")
+                .lines
+                .find(&.starts_with?("version:")) || "version: 0.0.0")
+                .gsub(/^version:\s*/, "")
+                .chomp
+            }}
 
   # Code du registre (ADR-003 D2) : `teledec` dans `PARTIDUO_MODULES`.
   CODE = "TELEDEC"
